@@ -12,7 +12,6 @@ use std::time::Duration;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
-
 use metasearch_core::{Category, Profile, SearchClient, SearchOptions};
 
 fn parse_profile(s: &str) -> PyResult<Profile> {
@@ -43,8 +42,8 @@ fn parse_category(s: &str) -> PyResult<Category> {
 }
 
 fn to_py(v: &impl serde::Serialize) -> PyResult<PyObject> {
-    let j = serde_json::to_value(v)
-        .map_err(|e| PyValueError::new_err(format!("serialize: {e}")))?;
+    let j =
+        serde_json::to_value(v).map_err(|e| PyValueError::new_err(format!("serialize: {e}")))?;
     Python::with_gil(|py| json_to_py(py, &j))
 }
 
@@ -58,7 +57,9 @@ fn json_to_py(py: Python<'_>, v: &serde_json::Value) -> PyResult<PyObject> {
             if let Some(i) = n.as_i64() {
                 PyInt::new(py, i).to_owned().into()
             } else {
-                PyFloat::new(py, n.as_f64().unwrap_or(0.0)).to_owned().into()
+                PyFloat::new(py, n.as_f64().unwrap_or(0.0))
+                    .to_owned()
+                    .into()
             }
         }
         serde_json::Value::String(s) => PyString::new(py, s).to_owned().into(),
@@ -123,7 +124,9 @@ impl Client {
         opts.engines = engines.unwrap_or_default();
         opts.page = page.max(1);
         opts.max_results = max_results.clamp(1, 200);
-        opts.safesearch = safesearch.parse().unwrap_or(metasearch_core::SafeSearch::Moderate);
+        opts.safesearch = safesearch
+            .parse()
+            .unwrap_or(metasearch_core::SafeSearch::Moderate);
         opts.region = region;
         opts.language = language;
         opts.time_range = time_range
@@ -158,13 +161,16 @@ impl Client {
                             .join(", ")
                     ))
                 })?;
-                let list =
-                    metasearch_core::search::block_on(metasearch_core::suggest(http, s, query, region))
-                        .map_err(|e| PyValueError::new_err(e.to_string()))?;
+                let list = metasearch_core::search::block_on(metasearch_core::suggest(
+                    http, s, query, region,
+                ))
+                .map_err(|e| PyValueError::new_err(e.to_string()))?;
                 serde_json::json!({"query": query, "source": name, "suggestions": list})
             }
             None => {
-                let all = metasearch_core::search::block_on(metasearch_core::suggest_all(http, query, region));
+                let all = metasearch_core::search::block_on(metasearch_core::suggest_all(
+                    http, query, region,
+                ));
                 let map: serde_json::Map<String, serde_json::Value> = all
                     .into_iter()
                     .map(|(s, list)| (s.name().to_string(), serde_json::json!(list)))
