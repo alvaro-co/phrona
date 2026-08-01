@@ -1,3 +1,4 @@
+mod frontend;
 mod grounding;
 mod tavily;
 
@@ -213,22 +214,6 @@ fn split_results(resp: &SearchResponse) -> Vec<Value> {
     items
 }
 
-async fn info() -> Json<Value> {
-    Json(json!({
-        "name": "MetaSearchRS",
-        "version": metasearch::version(),
-        "endpoints": [
-            "/health",
-            "/v1/search",
-            "/v1/suggest",
-            "/v1/engines",
-            "/v1/grounding",
-            "/search (Tavily-compatible)",
-        ],
-        "docs": "https://github.com/metasearchrs/metasearch",
-    }))
-}
-
 async fn health(State(state): State<Arc<AppState>>) -> Json<Value> {
     let web = engine::engines_for(Category::Web).len();
     let images = engine::engines_for(Category::Images).len();
@@ -346,7 +331,7 @@ async fn main() {
     });
 
     let app = Router::new()
-        .route("/", get(info))
+        .route("/", get(frontend::index))
         .route("/health", get(health))
         .route("/v1/engines", get(engines))
         .route("/v1/search", get(search_route))
@@ -354,6 +339,11 @@ async fn main() {
         .route("/v1/grounding", get(grounding::get).post(grounding::post))
         .route("/search", post(tavily::search))
         .route("/v1/tavily", post(tavily::search))
+        .nest_service(
+            "/static",
+            tower_http::services::ServeDir::new(frontend::static_dir()),
+        )
+        .fallback(frontend::index)
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
         .with_state(state);

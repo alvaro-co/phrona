@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MetaSearchRS</title>
+<meta name="description" content="Privacy-friendly metasearch across 25 engines.">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="topbar-inner">
+    <span class="brand" id="brand">MetaSearchRS</span>
+    <span class="spacer"></span>
+    <button id="theme-btn" class="icon-btn" title="Toggle theme" aria-label="Toggle theme"></button>
+  </div>
+</header>
+
+<main>
+  <section class="hero">
+    <div class="search-box" id="search-box">
+      <div class="search-field">
+        <span class="search-icon"></span>
+        <input id="q" type="search" placeholder="Search the web, images, news, videos…" autocomplete="off" spellcheck="false">
+        <button id="clear-btn" class="icon-btn" title="Clear" aria-label="Clear" hidden></button>
+      </div>
+      <div class="suggestions" id="suggestions" hidden></div>
+    </div>
+    <div class="category-row" id="category-row">
+      <button class="chip" data-cat="web">Web</button>
+      <button class="chip" data-cat="images">Images</button>
+      <button class="chip" data-cat="news">News</button>
+      <button class="chip" data-cat="videos">Videos</button>
+      <button class="chip" data-cat="books">Books</button>
+    </div>
+    <div class="controls">
+      <input id="region" class="text-input" placeholder="region (us-en)" title="Region code">
+      <select id="time-range" class="select" title="Time range">
+        <option value="">any time</option>
+        <option value="day">past day</option>
+        <option value="week">past week</option>
+        <option value="month">past month</option>
+        <option value="year">past year</option>
+      </select>
+      <input id="max-results" class="text-input narrow" type="number" min="1" max="100" value="20" title="Max results">
+    </div>
+    <div class="engines-row" id="engines-row"></div>
+    <div class="actions">
+      <button id="search-btn" class="raised-btn">Search</button>
+    </div>
+  </section>
+
+  <section class="meta" id="meta" hidden></section>
+  <section class="answer" id="answer" hidden></section>
+  <section class="results" id="results"></section>
+  <section class="empty" id="empty" hidden>
+    <p>Type a query and press Search.</p>
+  </section>
+  <footer class="foot">Powered by MetaSearchRS &mdash; requests are routed through multiple engines and merged locally.</footer>
+</main>
+
+<script src="/app.js"></script>
+</body>
+</html>
