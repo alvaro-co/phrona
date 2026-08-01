@@ -1,3 +1,6 @@
+use serde::Serialize;
+use serde::Serializer;
+
 use scraper::{Html, Selector};
 
 use crate::client::HttpClient;
@@ -12,6 +15,19 @@ pub struct ExtractedPage {
     pub description: String,
     pub text: String,
     pub images: Vec<String>,
+}
+
+impl Serialize for ExtractedPage {
+    fn serialize<S: Serializer>(&self, s: S) -> std::result::Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let mut st = s.serialize_struct("ExtractedPage", 5)?;
+        st.serialize_field("url", &self.url)?;
+        st.serialize_field("title", &self.title)?;
+        st.serialize_field("description", &self.description)?;
+        st.serialize_field("text", &self.text)?;
+        st.serialize_field("images", &self.images)?;
+        st.end()
+    }
 }
 
 /// Fetch and extract the main content of a page.

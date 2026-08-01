@@ -4,6 +4,7 @@ members = [
     "crates/metasearch",
     "crates/metasearch-api",
     "crates/metasearch-mcp",
+    "crates/metasearch-python",
 ]
 default-members = ["crates/metasearch"]
 

@@ -1,0 +1,17 @@
+[package]
+name = "metasearch-python"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Python bindings (pyo3) for the metasearch library"
+
+[lib]
+name = "metasearch"
+crate-type = ["cdylib"]
+
+[dependencies]
+metasearch-core = { package = "metasearch", path = "../metasearch" }
+pyo3 = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
