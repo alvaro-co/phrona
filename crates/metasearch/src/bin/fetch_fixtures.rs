@@ -53,10 +53,10 @@ fn main() {
     rt.block_on(run(&client, &ctx, query));
 }
 
-type Job = Pin<Box<dyn Future<Output = String> + Send>>;
+type Job<'a> = Pin<Box<dyn Future<Output = String> + Send + 'a>>;
 
 async fn run(client: &HttpClient, ctx: &EngineContext<'_>, query: &str) {
-    let mut jobs: Vec<(&str, Job)> = Vec::new();
+    let mut jobs: Vec<(&str, Job<'_>)> = Vec::new();
 
     // web
     jobs.push((
