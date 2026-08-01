@@ -35,4 +35,15 @@ impl From<std::io::Error> for Error {
     }
 }
 
+impl From<wreq::Error> for Error {
+    fn from(e: wreq::Error) -> Self {
+        let msg = e.to_string();
+        if msg.contains("timed out") || msg.contains("timeout") {
+            Error::Timeout(msg)
+        } else {
+            Error::Http(msg)
+        }
+    }
+}
+
 pub type Result<T> = std::result::Result<T, Error>;
