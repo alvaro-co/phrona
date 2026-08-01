@@ -17,7 +17,7 @@ pub use error::{Error, Result};
 pub use extract::{ExtractedPage, extract, extract_many};
 pub use models::*;
 pub use options::SearchOptions;
-pub use search::{SearchClient, search, search_sync};
+pub use search::{SearchClient, available_engines, search, search_sync};
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 

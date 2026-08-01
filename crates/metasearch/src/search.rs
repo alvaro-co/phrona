@@ -82,7 +82,7 @@ impl SearchClient {
         let mut any = false;
         for (name, result) in outcomes {
             match result {
-                Ok(mut items) => {
+                Ok(items) => {
                     if items.is_empty() {
                         reports.push(EngineReport {
                             name: name.to_string(),
@@ -94,8 +94,10 @@ impl SearchClient {
                     }
                     any = true;
                     let n = items.len();
-                    answers.extend(items.drain(..).filter(|r| r.url.is_empty()));
-                    raw.extend(items);
+                    let (answers_part, raw_part): (Vec<_>, Vec<_>) =
+                        items.into_iter().partition(|r| r.url.is_empty());
+                    answers.extend(answers_part);
+                    raw.extend(raw_part);
                     reports.push(EngineReport {
                         name: name.to_string(),
                         status: "ok".into(),
@@ -266,4 +268,40 @@ pub fn available_engines(category: Category) -> Vec<crate::models::EngineReport>
             error: None,
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::models::RawResult;
+
+    fn raw(title: &str, url: &str) -> RawResult {
+        RawResult {
+            title: title.into(),
+            url: url.into(),
+            description: "desc".into(),
+            engine: "bing".into(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn merge_keeps_results_and_answers() {
+        // answer marker (empty url) + real results must all survive merging
+        let items = vec![
+            raw("answer", ""),
+            raw("A", "https://example.com/a?utm_source=x"),
+            raw("B", "https://example.org/b"),
+        ];
+        let (answers, rest): (Vec<_>, Vec<_>) =
+            items.clone().into_iter().partition(|r| r.url.is_empty());
+        assert_eq!(answers.len(), 1);
+        assert_eq!(rest.len(), 2);
+        let groups = crate::dedup::group(rest);
+        assert_eq!(groups.len(), 2);
+        // dedup strips tracking params
+        assert_eq!(
+            crate::dedup::dedup_key(&items[1].url),
+            "https://example.com/a"
+        );
+    }
 }
