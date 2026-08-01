@@ -154,7 +154,7 @@ impl MetaSearchMcp {
     )]
     async fn fetch_page(&self, Parameters(p): Parameters<FetchParams>) -> String {
         match metasearch::extract(
-            &self.client.http(),
+            self.client.http(),
             &p.url,
             p.max_chars.unwrap_or(8000),
             None,
@@ -181,7 +181,7 @@ impl MetaSearchMcp {
                     return serde_json::json!({"error": format!("unknown source '{name}'")})
                         .to_string();
                 };
-                match metasearch::suggest(&self.client.http(), source, &p.query, region).await {
+                match metasearch::suggest(self.client.http(), source, &p.query, region).await {
                     Ok(list) => {
                         serde_json::json!({"query": p.query, "source": name, "suggestions": list})
                             .to_string()
@@ -190,7 +190,7 @@ impl MetaSearchMcp {
                 }
             }
             None => {
-                let all = metasearch::suggest_all(&self.client.http(), &p.query, region).await;
+                let all = metasearch::suggest_all(self.client.http(), &p.query, region).await;
                 let map: serde_json::Map<String, _> = all
                     .into_iter()
                     .map(|(s, list)| (s.name().to_string(), serde_json::json!(list)))
