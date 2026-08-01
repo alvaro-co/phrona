@@ -1,0 +1,96 @@
+use async_trait::async_trait;
+
+use crate::engine::{Engine, EngineContext};
+use crate::error::{Error, Result};
+use crate::models::{Category, RawResult, SafeSearch};
+use crate::parse;
+
+/// Brave videos (SSR HTML; JSON payload kept as fallback).
+pub struct BraveVideos;
+
+#[async_trait]
+impl Engine for BraveVideos {
+    fn name(&self) -> &'static str {
+        "brave_videos"
+    }
+
+    fn category(&self) -> Category {
+        Category::Videos
+    }
+
+    fn max_page(&self) -> u32 {
+        10
+    }
+
+    async fn search(&self, ctx: &EngineContext<'_>) -> Result<Vec<RawResult>> {
+        let opts = ctx.opts;
+        let (lang, country) = opts.lang_country();
+        let url = parse::with_query(
+            "https://search.brave.com/videos",
+            [
+                ("q", opts.query.as_str()),
+                ("source", "web"),
+                ("offset", &(opts.page - 1).to_string()),
+            ],
+        );
+        let mut headers = wreq::header::HeaderMap::new();
+        let ss = match opts.safesearch {
+            SafeSearch::Strict => "strict",
+            SafeSearch::Moderate => "moderate",
+            SafeSearch::Off => "off",
+        };
+        headers.insert(
+            wreq::header::COOKIE,
+            wreq::header::HeaderValue::from_str(&format!(
+                "safesearch={ss}; useLocation=0; country={country}; ui_lang={lang}-{country}"
+            ))
+            .unwrap(),
+        );
+        let resp = ctx.client.get_with_headers(&url, &headers).await?;
+        let body = resp.bytes().await.map_err(Error::from)?;
+        let text = String::from_utf8_lossy(&body);
+        Ok(parse_brave_videos(&text, self.name()))
+    }
+}
+
+pub fn parse_brave_videos(html: &str, engine: &str) -> Vec<RawResult> {
+    let mut out = Vec::new();
+    let doc = parse::parse_html(html);
+    let sel = scraper::Selector::parse("div.result-wrapper").unwrap();
+    let mut pos = 0u32;
+    for node in doc.select(&sel) {
+        let mut raw = match crate::engines::util::parse_brave_wrapper(&node) {
+            Some(r) => r,
+            None => continue,
+        };
+        let thumb = parse::attr(&node, "a.thumbnail img", "src").unwrap_or_default();
+        let image = crate::engines::util::brave_b64_decode(&thumb);
+        let uploader = parse::select_text(&node, ".site-name-content").unwrap_or_default();
+        let uploader = uploader.split('›').next().unwrap_or("").trim().to_string();
+        if image.is_empty() {
+            raw.thumbnail_url = thumb;
+        } else {
+            raw.thumbnail_url = thumb;
+            raw.image_url = image;
+        }
+        raw.uploader = uploader;
+        pos += 1;
+        raw.engine = engine.to_string();
+        raw.position = pos;
+        out.push(raw);
+    }
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_fixture() {
+        let html = include_str!("../../tests/fixtures/brave_videos.html");
+        let results = parse_brave_videos(html, "brave_videos");
+        assert!(!results.is_empty());
+        assert!(results[0].url.starts_with("http"));
+    }
+}

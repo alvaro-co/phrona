@@ -67,11 +67,7 @@ impl HttpClient {
         self.client.get(url).send().await.map_err(map_err)
     }
 
-    pub async fn get_with_headers(
-        &self,
-        url: &str,
-        headers: &HeaderMap,
-    ) -> Result<wreq::Response> {
+    pub async fn get_with_headers(&self, url: &str, headers: &HeaderMap) -> Result<wreq::Response> {
         let mut rb = self.client.get(url);
         for (k, v) in headers {
             rb = rb.header(k, v);
@@ -164,7 +160,8 @@ impl HttpClientBuilder {
     }
 
     pub fn header(mut self, name: &'static str, value: &str) -> Self {
-        self.headers.insert(name, HeaderValue::from_str(value).unwrap());
+        self.headers
+            .insert(name, HeaderValue::from_str(value).unwrap());
         self
     }
 

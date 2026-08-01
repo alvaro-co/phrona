@@ -21,6 +21,8 @@ chrono = { workspace = true }
 futures = { workspace = true }
 rand = { workspace = true }
 tracing = { workspace = true }
+base64 = "0.22"
+async-trait = "0.1"
 
 [dev-dependencies]
 tracing-subscriber = { workspace = true }
