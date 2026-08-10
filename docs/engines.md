@@ -66,8 +66,11 @@ wikipedia.
   `/suggestions`; images via POST with `tbm=isch`.
 - **wikipedia** - OpenSearch API, cross-article "Search the web" for extra
   URLs; results get a strong ranking bonus.
-- **grokipedia** - typeahead + `/page/` fetches; populates the `answer`
-  field in responses (used by `include_answer` in the Tavily endpoint).
+- **grokipedia** - typeahead + `/page/` fetches; the typeahead snippet is
+  returned as an **answer marker** (empty URL, capped at a sentence
+  boundary) so responses carry a real `answer` field (used verbatim by
+  `include_answer` in the Tavily endpoint and by the grounding endpoint),
+  plus the page result itself.
 - **yahoo / yahoo_news** - HTML, `fsr=1`-free parsing; news page has
   separate layout.
 - **annas_archive** - HTML, publisher/info extraction, `link=t` ISBN
