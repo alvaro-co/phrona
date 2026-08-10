@@ -1269,6 +1269,7 @@ dependencies = [
  "anyhow",
  "clap",
  "clap_complete",
+ "futures",
  "metasearch",
  "metasearch-api",
  "metasearch-mcp",

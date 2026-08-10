@@ -10,55 +10,167 @@
 <body>
 <header class="topbar">
   <div class="topbar-inner">
-    <span class="brand" id="brand">MetaSearchRS</span>
+    <span class="brand">MetaSearchRS</span>
+    <nav class="tabs">
+      <button class="tab active" data-view="search">Search</button>
+      <button class="tab" data-view="tools">Tools</button>
+    </nav>
     <span class="spacer"></span>
     <button id="theme-btn" class="icon-btn" title="Toggle theme" aria-label="Toggle theme"></button>
   </div>
 </header>
 
 <main>
-  <section class="hero">
-    <div class="search-box" id="search-box">
-      <div class="search-field">
-        <span class="search-icon"></span>
-        <input id="q" type="search" placeholder="Search the web, images, news, videos…" autocomplete="off" spellcheck="false">
-        <button id="clear-btn" class="icon-btn" title="Clear" aria-label="Clear" hidden></button>
+  <!-- ===================== SEARCH ===================== -->
+  <section id="view-search">
+    <div class="hero">
+      <div class="search-box">
+        <div class="search-field">
+          <input id="q" type="search" placeholder="Search the web, images, news, videos…" autocomplete="off" spellcheck="false">
+          <button id="clear-btn" class="icon-btn" title="Clear" aria-label="Clear" hidden></button>
+        </div>
+        <div class="suggestions" id="suggestions" hidden></div>
       </div>
-      <div class="suggestions" id="suggestions" hidden></div>
+      <div class="category-row" id="category-row">
+        <button class="chip active" data-cat="web">Web</button>
+        <button class="chip" data-cat="images">Images</button>
+        <button class="chip" data-cat="news">News</button>
+        <button class="chip" data-cat="videos">Videos</button>
+        <button class="chip" data-cat="books">Books</button>
+      </div>
+      <div class="param-row">
+        <input id="region" class="text-input" placeholder="region (us-en)" autocomplete="off">
+        <input id="language" class="text-input" placeholder="language (en)" autocomplete="off">
+        <select id="time-range" class="select">
+          <option value="">any time</option>
+          <option value="day">past day</option>
+          <option value="week">past week</option>
+          <option value="month">past month</option>
+          <option value="year">past year</option>
+        </select>
+        <select id="safesearch" class="select">
+          <option value="off">safesearch off</option>
+          <option value="moderate" selected>safesearch moderate</option>
+          <option value="strict">safesearch strict</option>
+        </select>
+        <input id="max-results" class="text-input narrow" type="number" min="1" max="100" value="20" title="Max results">
+        <input id="page" class="text-input narrow" type="number" min="1" value="1" title="Page">
+        <input id="filters" class="text-input grow" placeholder="filters — e.g. site:github.com" autocomplete="off">
+      </div>
+      <div class="engines-row" id="engines-row"></div>
+      <div class="actions">
+        <button id="search-btn" class="raised-btn">Search</button>
+        <label class="check"><input id="suggest-toggle" type="checkbox" checked>suggestions</label>
+        <label class="check"><input id="json-toggle" type="checkbox">JSON</label>
+      </div>
     </div>
-    <div class="category-row" id="category-row">
-      <button class="chip" data-cat="web">Web</button>
-      <button class="chip" data-cat="images">Images</button>
-      <button class="chip" data-cat="news">News</button>
-      <button class="chip" data-cat="videos">Videos</button>
-      <button class="chip" data-cat="books">Books</button>
+
+    <div class="meta" id="meta" hidden></div>
+    <div class="answer" id="answer" hidden></div>
+    <div class="results" id="results"></div>
+    <div class="empty" id="empty" hidden><p>Type a query and press Search.</p></div>
+    <div class="pager" id="pager" hidden>
+      <button id="prev-btn" class="raised-btn small">‹ prev</button>
+      <span class="pager-info" id="pager-info"></span>
+      <button id="next-btn" class="raised-btn small">next ›</button>
     </div>
-    <div class="controls">
-      <input id="region" class="text-input" placeholder="region (us-en)" title="Region code">
-      <select id="time-range" class="select" title="Time range">
-        <option value="">any time</option>
-        <option value="day">past day</option>
-        <option value="week">past week</option>
-        <option value="month">past month</option>
-        <option value="year">past year</option>
-      </select>
-      <input id="max-results" class="text-input narrow" type="number" min="1" max="100" value="20" title="Max results">
-    </div>
-    <div class="engines-row" id="engines-row"></div>
-    <div class="actions">
-      <button id="search-btn" class="raised-btn">Search</button>
+    <div class="engine-report" id="engine-report" hidden>
+      <button id="report-toggle" class="report-head">Engine report <span id="report-caret">▸</span></button>
+      <div id="report-body" class="report-body" hidden></div>
     </div>
   </section>
 
-  <section class="meta" id="meta" hidden></section>
-  <section class="answer" id="answer" hidden></section>
-  <section class="results" id="results"></section>
-  <section class="empty" id="empty" hidden>
-    <p>Type a query and press Search.</p>
+  <!-- ===================== TOOLS ===================== -->
+  <section id="view-tools" hidden>
+    <h1 class="page-title">Tools</h1>
+    <p class="page-sub">The same operations as the <code>ms</code> CLI, in the browser — against the live API.</p>
+    <nav class="tabs tool-tabs" id="tool-tabs">
+      <button class="tab active" data-tool="suggest">suggest</button>
+      <button class="tab" data-tool="extract">extract</button>
+      <button class="tab" data-tool="ground">ground</button>
+      <button class="tab" data-tool="engines">engines</button>
+      <button class="tab" data-tool="test">test</button>
+    </nav>
+
+    <div class="tool-panel" id="tool-suggest">
+      <form class="tool-form" data-tool-form="suggest">
+        <input class="text-input grow" placeholder="query prefix" required data-f="q">
+        <select class="select" data-f="source">
+          <option value="">all sources</option>
+          <option>duckduckgo</option><option>google</option><option>bing</option>
+          <option>brave</option><option>startpage</option><option>qwant</option><option>wikipedia</option>
+        </select>
+        <input class="text-input" placeholder="region (us-en)" data-f="region">
+        <button class="raised-btn small">Run</button>
+        <label class="check"><input type="checkbox" class="json-check">JSON</label>
+      </form>
+      <div class="out" data-out="suggest"></div>
+    </div>
+
+    <div class="tool-panel" id="tool-extract" hidden>
+      <form class="tool-form" data-tool-form="extract">
+        <input class="text-input grow" placeholder="https://…" required data-f="url">
+        <input class="text-input narrow" type="number" min="1" value="5000" title="max chars" data-f="max_chars">
+        <input class="text-input" placeholder="bias query (optional)" data-f="query">
+        <button class="raised-btn small">Run</button>
+        <label class="check"><input type="checkbox" class="json-check">JSON</label>
+      </form>
+      <div class="out" data-out="extract"></div>
+    </div>
+
+    <div class="tool-panel" id="tool-ground" hidden>
+      <form class="tool-form" data-tool-form="ground">
+        <input class="text-input grow" placeholder="query" required data-f="query">
+        <input class="text-input narrow" type="number" min="1" max="50" value="8" title="max results" data-f="max_results">
+        <select class="select" data-f="category">
+          <option value="web">web</option><option value="images">images</option>
+          <option value="news">news</option><option value="videos">videos</option>
+          <option value="books">books</option>
+        </select>
+        <select class="select" data-f="time_range">
+          <option value="">any time</option>
+          <option value="day">past day</option><option value="week">past week</option>
+          <option value="month">past month</option><option value="year">past year</option>
+        </select>
+        <button class="raised-btn small">Run</button>
+        <label class="check"><input type="checkbox" class="json-check">JSON</label>
+      </form>
+      <div class="out" data-out="ground"></div>
+    </div>
+
+    <div class="tool-panel" id="tool-engines" hidden>
+      <form class="tool-form" data-tool-form="engines">
+        <select class="select" data-f="category">
+          <option value="">all categories</option>
+          <option value="web">web</option><option value="images">images</option>
+          <option value="news">news</option><option value="videos">videos</option>
+          <option value="books">books</option>
+        </select>
+        <button class="raised-btn small">Run</button>
+        <label class="check"><input type="checkbox" class="json-check">JSON</label>
+      </form>
+      <div class="out" data-out="engines"></div>
+    </div>
+
+    <div class="tool-panel" id="tool-test" hidden>
+      <form class="tool-form" data-tool-form="test">
+        <input class="text-input grow" placeholder="query (default: rust programming)" data-f="query">
+        <select class="select" data-f="category">
+          <option value="">all categories</option>
+          <option value="web">web</option><option value="images">images</option>
+          <option value="news">news</option><option value="videos">videos</option>
+          <option value="books">books</option>
+        </select>
+        <input class="text-input narrow" type="number" min="1" max="10" value="5" title="max results" data-f="max_results">
+        <button class="raised-btn small">Run</button>
+        <label class="check"><input type="checkbox" class="json-check">JSON</label>
+      </form>
+      <div class="out" data-out="test"></div>
+    </div>
   </section>
-  <footer class="foot">Powered by MetaSearchRS &mdash; requests are routed through multiple engines and merged locally.</footer>
 </main>
 
+<footer class="foot">Powered by MetaSearchRS — requests are routed through multiple engines and merged locally.</footer>
 <script src="/app.js"></script>
 </body>
 </html>

@@ -65,30 +65,55 @@ async fn main() -> Result<()> {
             }
         }
         Command::Extract(args) => {
-            let page = metasearch::extract(
+            let results = metasearch::extract_many(
                 client.http(),
-                &args.url,
+                &args.urls,
                 args.max_chars,
                 args.query.as_deref(),
             )
-            .await?;
-            if cli.json {
-                println!("{}", serde_json::to_string_pretty(&page)?);
-            } else {
-                println!("title: {}\n", page.title);
-                if !page.description.is_empty() {
-                    println!("description: {}\n", page.description);
+            .await;
+            let mut failed = false;
+            for (url, result) in args.urls.iter().zip(results) {
+                match result {
+                    Ok(page) => {
+                        if cli.json {
+                            println!("{}", serde_json::to_string_pretty(&page)?);
+                        } else {
+                            if args.urls.len() > 1 {
+                                println!("== {url}");
+                            }
+                            println!("title: {}\n", page.title);
+                            if !page.description.is_empty() {
+                                println!("description: {}\n", page.description);
+                            }
+                            println!("{}", page.text);
+                            if !page.images.is_empty() {
+                                println!("\nimages: {}", page.images.join(" | "));
+                            }
+                            println!();
+                        }
+                    }
+                    Err(e) => {
+                        failed = true;
+                        eprintln!("{url}: {e}");
+                    }
                 }
-                println!("{}", page.text);
-                if !page.images.is_empty() {
-                    println!("\nimages: {}", page.images.join(" | "));
-                }
+            }
+            if failed {
+                std::process::exit(1);
             }
         }
         Command::Ground(args) => {
             let mut opts = cli.base_options(&args.query);
             opts.max_results = args.max_results;
             opts.engines = split_engines(args.engines.as_deref());
+            opts.category = args.category;
+            opts.region = args.region.clone();
+            opts.language = args.language.clone();
+            opts.time_range = args.time_range;
+            opts.safesearch = args.safesearch;
+            opts.filters = args.filters.clone();
+            opts.page = args.page;
             let resp = client.search(opts).await?;
             if cli.json {
                 print_json(&resp);
@@ -176,10 +201,11 @@ async fn run_serve(args: &args::ServeArgs) -> anyhow::Result<()> {
         anyhow::Ok(())
     };
 
-    tokio::select! {
-        r = rest_fut => r,
-        m = mcp_fut => m,
-    }
+    // Join both listeners: a disabled listener resolves immediately and the
+    // other keeps running (a tokio::select! here would exit when the
+    // disabled one completes and kill the server).
+    futures::future::try_join(rest_fut, mcp_fut).await?;
+    Ok(())
 }
 
 fn split_engines(s: Option<&str>) -> Vec<String> {
@@ -256,7 +282,7 @@ async fn run_test(cli: &Cli, client: &metasearch::SearchClient, args: &TestArgs)
     for cat in cats {
         let mut opts = cli.base_options(&args.query);
         opts.category = cat;
-        opts.max_results = 5;
+        opts.max_results = args.max_results.clamp(1, 10);
         match client.search(opts).await {
             Ok(resp) => reports.push((cat, resp)),
             Err(e) => {

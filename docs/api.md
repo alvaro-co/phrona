@@ -1,10 +1,14 @@
 # REST API reference
 
-`cargo run -p metasearch-api`
+`cargo run -p metasearch-api` (or `ms serve`, or `ms serve --no-mcp` for
+the REST server only).
 
-Serves the web frontend at `/` and JSON at `/v1/*`. CORS is permissive
-(access-control-allow-origin: *), so the API can be called from any browser
-origin. Responses are JSON, all timings in milliseconds.
+Serves the web frontend at `/`: a single page with a Search tab
+(full-parameter search) and a Tools tab (suggest, extract, ground,
+engines, test - every capability from the browser). JSON API at
+`/v1/*`. CORS is permissive (access-control-allow-origin: *), so the API
+can be called from any browser origin. Responses are JSON, all timings in
+milliseconds.
 
 ## Environment
 
@@ -15,28 +19,39 @@ origin. Responses are JSON, all timings in milliseconds.
 | `RUST_LOG` | `info` | tracing level (use `debug` for detail) |
 
 When a key is set, clients authenticate with the header
-`Authorization: Bearer <key>`, the query parameter `api_key=...` or the JSON
-field `"api_key": "..."`.
+`Authorization: Bearer <key>`, the header `x-api-key: <key>`, the query
+parameter `api_key=...` or the JSON field `"api_key": "..."`.
 
 ## GET /
 
-The web frontend (index.html). See [docs/frontend.md](frontend.md).
+The web frontend (single page: Search + Tools tabs). See
+[docs/frontend.md](frontend.md).
 
 ## GET /health
 
 ```json
-{"status":"ok","engines":{"web":11,"images":6,"news":4,"videos":3,"books":1},"uptime_s":42}
+{"status":"ok","version":"0.1.0","engines":{"web":11,"images":6,"news":4,"videos":3,"books":1},"uptime_s":42,"auth":false}
 ```
 
 No auth required.
 
 ## GET /v1/engines
 
+Optional `category` query parameter (`web | images | news | videos |
+books`; default: all categories). Returns a map of category to engine
+names, in priority order:
+
 ```json
-{"category":"web","engines":["bing","brave","mojeek","qwant","startpage","wikipedia","grokipedia","yahoo","yandex","duckduckgo","google"]}
+{
+  "web": ["duckduckgo", "google", "bing", "brave", "mojeek", "yahoo", "yandex", "startpage", "qwant", "wikipedia", "grokipedia"],
+  "images": ["duckduckgo_images", "bing_images", "brave_images", "startpage_images", "mojeek_images", "google_images"],
+  "news": ["duckduckgo_news", "bing_news", "yahoo_news", "brave_news"],
+  "videos": ["duckduckgo_videos", "bing_videos", "brave_videos"],
+  "books": ["annas_archive"]
+}
 ```
 
-Optional `category` query parameter. Auth required if a key is set.
+Auth required if a key is set.
 
 ## GET /v1/search
 
@@ -109,6 +124,58 @@ Errors: HTTP 400 (bad params, e.g. unknown category or engine), 401
 ```
 
 Without `source`, returns a map of every source to its list.
+
+## GET|POST /v1/extract
+
+Readable-text extraction of a page (the same feature as `ms extract` and
+the library's `extract`). Query params (GET) or JSON body (POST):
+
+| Field | Default | Meaning |
+| --- | --- | --- |
+| `url` | required | page to fetch and extract |
+| `max_chars` | `5000` | max characters of extracted text (1-100000) |
+| `query` | unset | bias the excerpt toward this query |
+
+Response is the `ExtractedPage` shape:
+
+```json
+{
+  "url": "https://doc.rust-lang.org/book/ch04-01-what-is-ownership.html",
+  "title": "What Is Ownership? - The Rust Programming Language",
+  "description": "...",
+  "text": "...",
+  "images": ["https://..."]
+}
+```
+
+## GET /v1/test
+
+Availability probe across every category (the same feature as
+`ms test`): runs a real search per category and reports per-engine
+status, result counts and errors.
+
+| Param | Default | Meaning |
+| --- | --- | --- |
+| `query` | `rust programming` | probe query |
+| `category` | all categories | `web`, `images`, `news`, `videos`, `books` |
+| `max_results` | `5` | merged results per category (1-10) |
+
+Response: an array of per-category reports.
+
+```json
+[
+  {
+    "category": "web",
+    "total": 8,
+    "elapsed_ms": 1200,
+    "answer": "...",
+    "engines": [
+      {"name": "bing", "status": "ok", "results": 10},
+      {"name": "google", "status": "error", "error": "http ... 429"}
+    ]
+  }
+]
+```
 
 ## POST /search and POST /v1/tavily
 

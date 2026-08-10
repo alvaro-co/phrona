@@ -28,9 +28,21 @@ struct SearchParams {
     #[schemars(description = "Region code, e.g. us-en (default from client)")]
     #[serde(default)]
     region: Option<String>,
+    #[schemars(description = "Language code, e.g. en")]
+    #[serde(default)]
+    language: Option<String>,
     #[schemars(description = "Time range: day, week, month or year")]
     #[serde(default)]
     time_range: Option<String>,
+    #[schemars(description = "SafeSearch level: off, moderate or strict (default moderate)")]
+    #[serde(default)]
+    safesearch: Option<String>,
+    #[schemars(description = "Engine-specific filter string, e.g. site:example.com")]
+    #[serde(default)]
+    filters: Option<String>,
+    #[schemars(description = "Result page (default 1)")]
+    #[serde(default)]
+    page: Option<u32>,
 }
 
 #[derive(Debug, serde::Deserialize, JsonSchema)]
@@ -87,8 +99,16 @@ impl MetaSearchMcp {
             opts.max_results = m.clamp(1, 100);
         }
         opts.region = p.region.clone();
+        opts.language = p.language.clone();
         if let Some(t) = &p.time_range {
             opts.time_range = t.parse::<TimeRange>().ok();
+        }
+        if let Some(s) = &p.safesearch {
+            opts.safesearch = s.parse().unwrap_or(metasearch::SafeSearch::Moderate);
+        }
+        opts.filters = p.filters.clone();
+        if let Some(page) = p.page {
+            opts.page = page.max(1);
         }
         opts
     }

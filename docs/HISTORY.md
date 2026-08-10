@@ -219,3 +219,40 @@ extract), all fixture-free and fast (0.5 s). Bugs surfaced and fixed:
   mcp-4get had moved. Pins updated to verified tips; a note in
   docs/upstream.md records the correction. Verification shows zero
   drift at the new pins.
+
+## Final pass: full parameter surface, web tools tab, release workflow
+
+- **API completeness**: `/v1/engines` accepts an optional `category`;
+  new `/v1/extract` (GET/POST, the library's `extract` feature) and
+  `/v1/test` (the `ms test` availability probe) so every CLI capability
+  is reachable over HTTP.
+- **CLI completeness**: `ms extract` takes multiple URLs (parallel via
+  `extract_many`); `ms ground` accepts the full option set (category,
+  region, language, time range, safesearch, filters, page); `ms test`
+  gained `--max-results`.
+- **MCP completeness**: the search tools now expose `safesearch`,
+  `language`, `filters` and `page` (the docs already promised them).
+- **Frontend redesign** (one static page, zero bloat): Search tab with
+  every library parameter - engines, category, safesearch, region,
+  language, time range, filters, page, suggestions toggle, JSON view,
+  collapsible per-engine report, pagination, and the full query kept in
+  the URL hash (shareable results). Tools tab runs the five CLI
+  operations in the browser (suggest/extract/ground/engines/test), each
+  against the live API with a JSON toggle. Vanilla JS, one file, no
+  framework, no build step. WASM evaluation: rejected - wreq/hyper's
+  TLS layer cannot run in a browser (no wasm backend, browser owns TLS),
+  and the engines don't send CORS headers, so client-side scraping is
+  impossible; the static-page + REST API split is the correct
+  architecture.
+- **Release workflow**: `.github/workflows/release.yml` - push a `v*`
+  tag to build `ms`/`metasearch-api`/`metasearch-mcp` for linux
+  x86_64/aarch64, windows x86_64, macos aarch64 plus the Python wheel,
+  and publish a GitHub Release with sha256 checksums. Documented in
+  docs/releasing.md.
+- **Bug fixed**: `ms serve --no-mcp` (and `--no-rest`) exited
+  immediately - the disabled listener completed instantly and
+  `tokio::select!` returned. Now joined with `futures::try_join` so the
+  enabled listener keeps running. Found by the smoke test.
+- `cargo fmt`, `cargo clippy --workspace --all-targets` (zero warnings),
+  `cargo test --workspace` (64 tests), end-to-end smoke: page, css, js,
+  engines?category, extract, test, search endpoints all live.

@@ -1,6 +1,7 @@
 pub mod frontend;
 pub mod grounding;
 pub mod tavily;
+pub mod tools;
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -239,9 +240,22 @@ async fn health(State(state): State<Arc<AppState>>) -> Json<Value> {
     }))
 }
 
-async fn engines() -> Json<Value> {
+#[derive(Deserialize)]
+struct EnginesParams {
+    category: Option<String>,
+}
+
+async fn engines(Query(p): Query<EnginesParams>) -> AppResult<Json<Value>> {
+    let cats: Vec<Category> = match p.category.as_deref() {
+        Some(c) => vec![c.parse::<Category>().map_err(|_| {
+            AppError::bad_request(
+                "invalid category, expected one of: web, images, news, videos, books",
+            )
+        })?],
+        None => Category::ALL.to_vec(),
+    };
     let mut out = serde_json::Map::new();
-    for cat in Category::ALL {
+    for cat in cats {
         out.insert(
             cat.as_str().to_string(),
             json!(
@@ -252,7 +266,7 @@ async fn engines() -> Json<Value> {
             ),
         );
     }
-    Json(Value::Object(out))
+    Ok(Json(Value::Object(out)))
 }
 
 async fn search_route(
@@ -338,6 +352,11 @@ pub fn router(api_key: Option<String>) -> Router {
         .route("/v1/engines", get(engines))
         .route("/v1/search", get(search_route))
         .route("/v1/suggest", get(suggest_route))
+        .route(
+            "/v1/extract",
+            get(tools::extract_get).post(tools::extract_post),
+        )
+        .route("/v1/test", get(tools::test))
         .route("/v1/grounding", get(grounding::get).post(grounding::post))
         .route("/search", post(tavily::search))
         .route("/v1/tavily", post(tavily::search))
