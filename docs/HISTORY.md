@@ -143,10 +143,48 @@ and parser tests skip block pages gracefully.
   `Path<Vec<String>>` extractor receives an empty vec in fallback
   handlers - read `req.uri().path()` instead).
 
+## 094d8e9 - answer: grokipedia emits an answer marker; Tavily include_answer queries the answer engine
+
+- The `answer` field was dead: no engine ever returned a URL-less marker,
+  so `SearchResponse.answer` was always None and Tavily's `include_answer`
+  never produced content despite being documented.
+- grokipedia now returns two raw results: an answer marker (empty URL,
+  typeahead snippet capped at a sentence boundary, 500 chars) and the
+  page result itself. The merge partition routes the marker to the
+  answer field verbatim.
+- Tavily `/search` with `search_depth=basic` appends the grokipedia answer
+  engine to the engine set when `include_answer` is requested (basic depth
+  previously restricted engines to bing+duckduckgo, so the answer engine
+  never ran).
+- docs: grounding and search_grounded response shapes corrected to the
+  implemented {query, answer, sources[]} contract.
+
+## 00990e1 - tests: 35 new offline tests (64 total); five real bugs fixed
+
+New test modules per subsystem (dedup, rank, options, util, suggest,
+extract), all fixture-free and fast (0.5 s). Bugs surfaced and fixed:
+
+- google suggest with `<b>` emphasis lost the prefix (only the bold
+  fragment was returned); the full suggestion text is taken now.
+- js_to_json left single-quoted strings unterminated (closing quote was
+  not converted to `"`) and quoted numeric values; both fixed.
+- meta description extraction read element text (always empty) instead
+  of the content attribute.
+- truncate emitted max chars plus `...` (overran the budget); the
+  ellipsis now counts toward max.
+- SafeSearch FromStr silently mapped unknown values to Moderate; now
+  strict, and the REST API returns 400 for invalid safesearch.
+- wikipedia/grokipedia ranking bonus raised 2.0 -> 3.0 so a wiki hit at
+  position 10 deterministically outranks a same-text position-1 hit.
+
 ## Final pass
 
 - `cargo fmt`, `cargo clippy --all-targets` (library, API, MCP: zero
-  warnings), `cargo test --workspace` (29 tests, offline via fixtures),
-  `cargo build --release`.
-- End-to-end smoke: REST API on a scratch port, MCP JSON-RPC session,
-  Python wheel in a fresh venv.
+  warnings), `cargo test --workspace` (64 tests, offline via fixtures,
+  ~0.5 s), `cargo build --release`.
+- End-to-end smoke: REST API on a scratch port (health, search with live
+  bing/brave/yahoo/wikipedia/grokipedia results, suggest from all 7
+  sources, grounding with real answers, Tavily with include_answer,
+  parameter validation 400s, frontend assets), MCP JSON-RPC session
+  (initialize, tools/list, tools/call including search_grounded with
+  live answers), Python crate `cargo check`.
