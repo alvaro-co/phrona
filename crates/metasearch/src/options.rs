@@ -82,3 +82,81 @@ impl SearchOptions {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn enums_parse_from_str() {
+        for (s, expect) in [
+            ("web", Category::Web),
+            ("images", Category::Images),
+            ("news", Category::News),
+            ("videos", Category::Videos),
+            ("books", Category::Books),
+        ] {
+            assert_eq!(s.parse::<Category>().unwrap(), expect);
+        }
+        assert!("nope".parse::<Category>().is_err());
+
+        for (s, expect) in [
+            ("off", SafeSearch::Off),
+            ("moderate", SafeSearch::Moderate),
+            ("strict", SafeSearch::Strict),
+        ] {
+            assert_eq!(s.parse::<SafeSearch>().unwrap(), expect);
+        }
+        assert!("x".parse::<SafeSearch>().is_err());
+
+        for (s, expect) in [
+            ("day", TimeRange::Day),
+            ("week", TimeRange::Week),
+            ("month", TimeRange::Month),
+            ("year", TimeRange::Year),
+        ] {
+            assert_eq!(s.parse::<TimeRange>().unwrap(), expect);
+        }
+        assert!("yesterday".parse::<TimeRange>().is_err());
+    }
+
+    #[test]
+    fn defaults_are_sane() {
+        let o = SearchOptions::default();
+        assert_eq!(o.category, Category::Web);
+        assert_eq!(o.page, 1);
+        assert_eq!(o.max_results, 20);
+        assert_eq!(o.safesearch, SafeSearch::Moderate);
+        assert_eq!(o.engines, Vec::<String>::new());
+        assert!(o.proxies.is_empty());
+    }
+
+    #[test]
+    fn new_sets_query_only() {
+        let o = SearchOptions::new("hello world");
+        assert_eq!(o.query, "hello world");
+        assert_eq!(o.category, Category::Web);
+    }
+
+    #[test]
+    fn lang_country_derivation() {
+        let o = SearchOptions {
+            region: Some("de-de".into()),
+            language: None,
+            ..Default::default()
+        };
+        assert_eq!(o.lang_country(), ("de".into(), "de".into()));
+        assert_eq!(o.region_param(), "de-de");
+
+        let o = SearchOptions::default();
+        assert_eq!(o.lang_country(), ("en".into(), "us".into()));
+        assert_eq!(o.region_param(), "en-us");
+
+        let o = SearchOptions {
+            language: Some("fr".into()),
+            region: Some("fr-fr".into()),
+            ..Default::default()
+        };
+        assert_eq!(o.lang_country(), ("fr".into(), "fr".into()));
+    }
+}

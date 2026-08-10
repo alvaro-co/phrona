@@ -261,6 +261,7 @@ pub fn truncate(text: &str, max: usize) -> String {
     if text.chars().count() <= max {
         return text.to_string();
     }
-    let cut: String = text.chars().take(max).collect();
-    format!("{cut}...")
+    let keep = max.saturating_sub(3);
+    let cut: String = text.chars().take(keep).collect();
+    if keep == 0 { cut } else { format!("{cut}...") }
 }

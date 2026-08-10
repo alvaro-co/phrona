@@ -48,6 +48,7 @@ pub fn dedup_key(url: &str) -> String {
     key
 }
 
+#[derive(Debug, Clone)]
 pub struct GroupedResult {
     pub result: RawResult,
     pub engines: Vec<String>,
@@ -88,4 +89,73 @@ where
         }
     }
     order.into_iter().filter_map(|k| map.remove(&k)).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn raw(title: &str, url: &str, engine: &str) -> RawResult {
+        RawResult {
+            title: title.into(),
+            url: url.into(),
+            engine: engine.into(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn dedup_key_normalizes() {
+        assert_eq!(dedup_key("HTTP://Example.COM/a/"), "http://example.com/a");
+        assert_eq!(dedup_key("https://example.com/"), "https://example.com/");
+        assert_eq!(dedup_key("https://example.com/a/"), "https://example.com/a");
+    }
+
+    #[test]
+    fn dedup_key_strips_tracking_params() {
+        assert_eq!(
+            dedup_key("https://example.com/a?utm_source=x&utm_medium=y&id=1"),
+            "https://example.com/a?id=1"
+        );
+        assert_eq!(
+            dedup_key("https://example.com/a?fbclid=abc&si=def&ref=ghi"),
+            "https://example.com/a"
+        );
+    }
+
+    #[test]
+    fn dedup_key_sorts_remaining_query() {
+        assert_eq!(
+            dedup_key("https://example.com/a?b=2&a=1"),
+            "https://example.com/a?a=1&b=2"
+        );
+    }
+
+    #[test]
+    fn dedup_key_unparseable_falls_back() {
+        assert_eq!(dedup_key("not a url"), "not a url");
+    }
+
+    #[test]
+    fn group_merges_across_engines() {
+        let items = vec![
+            raw("A", "https://example.com/a?utm_source=x", "bing"),
+            raw("A", "https://example.com/a", "brave"),
+            raw("B", "https://example.org/b", "brave"),
+        ];
+        let g = group(items);
+        assert_eq!(g.len(), 2);
+        let a = g.iter().find(|g| g.result.title == "A").unwrap();
+        assert_eq!(a.count, 2);
+        assert_eq!(a.engines, ["bing", "brave"]);
+    }
+
+    #[test]
+    fn group_drops_answer_markers_and_empty_urls() {
+        let items = vec![
+            raw("answer", "", "grokipedia"),
+            raw("A", "https://example.com/a", "bing"),
+        ];
+        assert_eq!(group(items).len(), 1);
+    }
 }

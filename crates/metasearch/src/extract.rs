@@ -56,8 +56,8 @@ pub fn extract_from_html(
 ) -> ExtractedPage {
     let doc = Html::parse_document(html);
     let title = parse::doc_text(&doc, "title").unwrap_or_else(|| url.to_string());
-    let description = parse::doc_text(&doc, "meta[name=\"description\"]")
-        .or_else(|| parse::doc_text(&doc, "meta[property=\"og:description\"]"))
+    let description = parse::doc_attr(&doc, "meta[name=\"description\"]", "content")
+        .or_else(|| parse::doc_attr(&doc, "meta[property=\"og:description\"]", "content"))
         .unwrap_or_default();
 
     let mut text = String::new();
@@ -128,4 +128,53 @@ pub async fn extract_many(
         .iter()
         .map(|url| async move { extract(client, url, max_chars, query).await });
     futures::future::join_all(futs).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const HTML: &str = r#"
+<!doctype html><html><head>
+<title>Rust Book</title>
+<meta name="description" content="Learn the Rust language">
+</head><body>
+<main>
+<h1>Ownership</h1>
+<p>Rust ownership is a set of rules that govern memory management.</p>
+<p>Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.</p>
+<p>Borrowing lets you use data without taking it. The borrow checker enforces these rules at compile time.</p>
+<img src="https://example.com/a.png">
+</main>
+</body></html>"#;
+
+    #[test]
+    fn extracts_title_description_images() {
+        let page = extract_from_html(HTML, "https://doc.rust-lang.org", 500, None);
+        assert_eq!(page.title, "Rust Book");
+        assert_eq!(page.description, "Learn the Rust language");
+        assert_eq!(page.images, ["https://example.com/a.png"]);
+    }
+
+    #[test]
+    fn truncates_to_max_chars() {
+        let page = extract_from_html(HTML, "u", 20, None);
+        assert!(page.text.chars().count() <= 20);
+    }
+
+    #[test]
+    fn query_bias_excerpts() {
+        let page = extract_from_html(HTML, "u", 300, Some("borrowing"));
+        assert!(page.text.contains("Borrowing"));
+        assert!(!page.text.contains("memory management"));
+        assert!(page.text.starts_with("..."));
+    }
+
+    #[test]
+    fn empty_and_tiny_html_do_not_panic() {
+        let page = extract_from_html("", "u", 100, None);
+        assert!(page.text.is_empty());
+        let page = extract_from_html("<p>hi</p>", "u", 100, Some("q"));
+        assert!(!page.text.is_empty());
+    }
 }
