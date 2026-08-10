@@ -77,10 +77,8 @@ pub async fn get(
     Query(p): Query<GroundingRequest>,
     headers: HeaderMap,
 ) -> AppResult<impl IntoResponse> {
-    let key = p
-        .api_key
-        .as_deref()
-        .or_else(|| headers.get("x-api-key").and_then(|v| v.to_str().ok()));
+    let header_key = crate::api_key_from_headers(&headers);
+    let key = p.api_key.as_deref().or(header_key.as_deref());
     if !state.authorized(key) {
         return Err(AppError::unauthorized());
     }
@@ -92,10 +90,8 @@ pub async fn post(
     headers: HeaderMap,
     Json(p): Json<GroundingRequest>,
 ) -> AppResult<impl IntoResponse> {
-    let key = p
-        .api_key
-        .as_deref()
-        .or_else(|| headers.get("x-api-key").and_then(|v| v.to_str().ok()));
+    let header_key = crate::api_key_from_headers(&headers);
+    let key = p.api_key.as_deref().or(header_key.as_deref());
     if !state.authorized(key) {
         return Err(AppError::unauthorized());
     }

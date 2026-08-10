@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "High-performance metasearch engine library - Rust core with Python bindings"
 readme = "README.md"
 requires-python = ">=3.9"
-license = "MIT"
+license = "AGPL-3.0-only"
 
 [build-system]
 requires = ["setuptools-rust>=1.10"]

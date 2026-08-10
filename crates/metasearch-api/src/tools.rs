@@ -34,10 +34,7 @@ pub struct TestParams {
 }
 
 fn header_key(headers: &HeaderMap) -> Option<String> {
-    headers
-        .get("x-api-key")
-        .and_then(|v| v.to_str().ok())
-        .map(str::to_string)
+    crate::api_key_from_headers(headers)
 }
 
 pub async fn extract_get(

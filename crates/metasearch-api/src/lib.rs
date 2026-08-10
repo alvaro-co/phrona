@@ -153,6 +153,18 @@ fn header_key(headers: &HeaderMap) -> Option<String> {
         .get("x-api-key")
         .and_then(|v| v.to_str().ok())
         .map(str::to_string)
+        .or_else(|| {
+            headers
+                .get(axum::http::header::AUTHORIZATION)
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.strip_prefix("Bearer ").map(str::to_string))
+        })
+}
+
+/// Extract the API key from the x-api-key header or the Authorization:
+/// Bearer header. Used by every authenticated handler.
+pub(crate) fn api_key_from_headers(headers: &HeaderMap) -> Option<String> {
+    header_key(headers)
 }
 
 fn split_results(resp: &SearchResponse) -> Vec<Value> {

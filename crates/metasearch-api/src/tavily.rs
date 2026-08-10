@@ -94,10 +94,8 @@ pub async fn search(
     headers: HeaderMap,
     Json(req): Json<TavilyRequest>,
 ) -> AppResult<impl IntoResponse> {
-    let key = req
-        .api_key
-        .as_deref()
-        .or_else(|| headers.get("x-api-key").and_then(|v| v.to_str().ok()));
+    let header_key = crate::api_key_from_headers(&headers);
+    let key = req.api_key.as_deref().or(header_key.as_deref());
     if !state.authorized(key) {
         return Err(AppError::unauthorized());
     }
