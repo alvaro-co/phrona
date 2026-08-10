@@ -88,7 +88,14 @@ Point your MCP client (Claude Desktop, claude-code, Cursor...) at the
 
 ## Quick start (web)
 
-Start the API server and open http://localhost:8080.
+```bash
+cargo run -p metasearch-api          # or: ms serve
+# open http://localhost:8080         -> search page (full parameters + JSON view)
+#                                    -> Tools tab: suggest / extract / ground / engines / test
+```
+
+The web app is served from disk (`frontend/`), so editing it takes effect
+on reload - no rebuild.
 
 ## Features
 
@@ -103,15 +110,22 @@ Start the API server and open http://localhost:8080.
   (DDG vqd, Startpage sc), time ranges, safesearch, regions, per-engine
   filter strings, proxies.
 - REST API with Tavily-compatible `/search` endpoint, AI grounding endpoint,
-  suggestions and health.
+  page extraction, availability probing (`/v1/test`), suggestions and health.
 - MCP server with compartmentalized tools and grounded search for RAG.
 - Python bindings with the full search surface.
+- Web frontend: one static page with full-parameter search (engines,
+  category, safesearch, region, language, time range, filters, page,
+  JSON view, per-engine report) and a Tools tab that runs every CLI
+  capability in the browser (suggest, extract, ground, engines, test).
 - Fixture-based parser tests: 25 captured live pages (see
   `crates/metasearch/tests/fixtures/`), network-independent.
 - Upstream drift monitor: `scripts/watch_upstream.sh` + the
   `upstream-watch` GitHub workflow report when any of the 8 upstream
   projects moves past its pinned commit, so broken parsers are caught
   early (see [docs/upstream.md](docs/upstream.md)).
+- Tag-driven releases: push `vX.Y.Z` and the `release` workflow builds
+  binaries for Linux/Windows/macOS plus the Python wheel and publishes a
+  GitHub Release (see [docs/releasing.md](docs/releasing.md)).
 
 ## Layout of this documentation
 
@@ -127,16 +141,28 @@ Start the API server and open http://localhost:8080.
 | [docs/frontend.md](docs/frontend.md) | Web frontend |
 | [docs/engines.md](docs/engines.md) | Engine-by-engine reference and block status |
 | [docs/upstream.md](docs/upstream.md) | Upstream sources, what was borrowed, how to monitor |
+| [docs/releasing.md](docs/releasing.md) | Tagging and publishing releases |
 | [docs/HISTORY.md](docs/HISTORY.md) | Complete build history |
 
 ## Development
 
+Both `make` and plain `cargo` work; the cargo commands are the same ones
+CI runs:
+
 ```bash
-make check                 # fmt-check + clippy + tests (offline, ~1 s)
-make build                 # cargo build --workspace
-make release               # release binaries for cli/api/mcp
-make wheel                 # Python wheel (uv)
-make serve                 # ms serve (REST + MCP-over-TCP)
+cargo fmt --all --check           # or: make fmt-check
+cargo clippy --workspace --all-targets -- -D warnings   # or: make lint
+cargo test --workspace            # 64 offline fixture tests, ~1 s  (make test)
+make check                        # fmt-check + lint + test in one
+
+cargo build --workspace           # or: make build
+cargo build --release -p metasearch-cli -p metasearch-api -p metasearch-mcp  # make release
+uv build                          # Python wheel (make wheel)
+
+cargo run -p metasearch --bin fetch_fixtures [engine...]   # re-capture live fixtures
+cargo run -p metasearch --bin dbg_parse -- bing            # parse a fixture
+cargo run -p metasearch --bin probe_profiles               # probe impersonation profiles
+cargo run -p metasearch-examples --bin basic -- "rust"     # run the examples
 ```
 
 Known limitation: Google, Qwant, Mojeek and the DDG HTML endpoint

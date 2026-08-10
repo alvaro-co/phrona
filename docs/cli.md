@@ -42,17 +42,29 @@ ms suggest rus --source bing,wikipedia
 ms suggest rus --json                # all 7 sources
 ```
 
-### ms extract <url>
+### ms extract <url> [url...]
+
+One or more URLs, fetched and extracted in parallel. `--query` biases
+the excerpt; `--max-chars` caps the text.
 
 ```bash
 ms extract https://doc.rust-lang.org/book/ch04-01-what-is-ownership.html \
   --max-chars 3000 --query ownership
+ms extract https://example.com https://example.org --max-chars 800
 ```
 
 ### ms ground <query>
 
 Grounded output for RAG: the answer (library answer engine verbatim when
 present, otherwise an extractive summary) followed by ranked cited sources.
+Accepts the full search option set: `--category`, `--engines`,
+`--max-results`, `--region`, `--language`, `--time-range`, `--safesearch`,
+`--filters`, `--page`.
+
+```bash
+ms ground "rust ownership"
+ms ground "rust" --category news --time-range week --region us-en --max-results 5
+```
 
 ### ms engines
 
@@ -70,6 +82,7 @@ network, a proxy setup or a profile choice.
 
 ```bash
 ms test --query "rust programming"
+ms test --category web --max-results 8
 ms test --category web --json
 ```
 

@@ -114,8 +114,9 @@ pub struct SuggestArgs {
 
 #[derive(Args)]
 pub struct ExtractArgs {
-    /// Page URL
-    pub url: String,
+    /// Page URLs (several may be given; they are fetched in parallel)
+    #[arg(required = true)]
+    pub urls: Vec<String>,
 
     /// Maximum characters of extracted text
     #[arg(long, default_value_t = 5000)]
@@ -138,6 +139,34 @@ pub struct GroundArgs {
     /// Comma-separated engine names
     #[arg(long)]
     pub engines: Option<String>,
+
+    /// Result category: web | images | news | videos | books
+    #[arg(long, value_parser = category_parser, default_value = "web")]
+    pub category: Category,
+
+    /// Region (e.g. us-en, de-de)
+    #[arg(long)]
+    pub region: Option<String>,
+
+    /// Language (e.g. en)
+    #[arg(long)]
+    pub language: Option<String>,
+
+    /// Time range: day | week | month | year
+    #[arg(long, value_parser = time_range_parser)]
+    pub time_range: Option<TimeRange>,
+
+    /// SafeSearch level: off | moderate | strict
+    #[arg(long, value_parser = safesearch_parser, default_value = "moderate")]
+    pub safesearch: metasearch::SafeSearch,
+
+    /// Engine filter string (e.g. site:github.com)
+    #[arg(long)]
+    pub filters: Option<String>,
+
+    /// Result page
+    #[arg(long, default_value_t = 1)]
+    pub page: u32,
 }
 
 #[derive(Args)]
@@ -156,6 +185,10 @@ pub struct TestArgs {
     /// Probe a single category only
     #[arg(long, value_parser = category_parser)]
     pub category: Option<Category>,
+
+    /// Maximum merged results per category
+    #[arg(long, default_value_t = 5)]
+    pub max_results: usize,
 }
 
 #[derive(Args)]
