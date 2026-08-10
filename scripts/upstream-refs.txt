@@ -1,0 +1,12 @@
+# Upstream repository pins: <name>=<commit>
+# The pinned commit is the last version the implementation was verified
+# against. Update here only after reviewing the drift (see docs/upstream.md)
+# and re-verifying with the fixture workflow.
+4get=ba7ee6e
+searxng=0a118066
+ddgs=a12929a
+websurfx=09582be
+primp=80cb5f3
+wreq=aa0063a
+wreq-util=501b142
+mcp-4get=dd59cb7

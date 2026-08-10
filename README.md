@@ -9,11 +9,27 @@ a web frontend.
 ```text
 crates/metasearch          core library (Rust)
 crates/metasearch-api      REST API server (axum)
-crates/metasearch-mcp      MCP server for AI agents (rmcp, stdio)
+crates/metasearch-mcp      MCP server for AI agents (rmcp, stdio + TCP)
+crates/metasearch-cli      ms: single CLI to everything (search, server, MCP)
 crates/metasearch-python   Python bindings (pyo3)
+examples/                  runnable Rust and Python examples
 frontend/                  Material 3 style static web app
+scripts/                   upstream drift monitor
 docs/                      full documentation
 ```
+
+## Quick start (CLI)
+
+```bash
+cargo run -p metasearch-cli -- search "rust programming" --max-results 10
+cargo run -p metasearch-cli -- suggest rus
+cargo run -p metasearch-cli -- serve         # REST 8080 + MCP-over-TCP 8081
+```
+
+`ms` is the all-in-one entry point: search, suggest, extract, grounding,
+engine listing, availability tests (`ms test`), the full REST server, MCP
+over stdio (`ms mcp`) or TCP (`ms serve`), and shell completions. See
+[docs/cli.md](docs/cli.md).
 
 ## Quick start (Rust)
 
@@ -61,6 +77,8 @@ Requires CPython <= 3.13 (pyo3 0.24 ABI).
 
 ```bash
 cargo run -p metasearch-mcp                 # stdio JSON-RPC
+cargo run -p metasearch-cli -- mcp          # same, via ms
+cargo run -p metasearch-cli -- serve        # also serves MCP over TCP 8081
 ```
 
 Point your MCP client (Claude Desktop, claude-code, Cursor...) at the
@@ -90,6 +108,10 @@ Start the API server and open http://localhost:8080.
 - Python bindings with the full search surface.
 - Fixture-based parser tests: 25 captured live pages (see
   `crates/metasearch/tests/fixtures/`), network-independent.
+- Upstream drift monitor: `scripts/watch_upstream.sh` + the
+  `upstream-watch` GitHub workflow report when any of the 8 upstream
+  projects moves past its pinned commit, so broken parsers are caught
+  early (see [docs/upstream.md](docs/upstream.md)).
 
 ## Layout of this documentation
 
@@ -99,6 +121,9 @@ Start the API server and open http://localhost:8080.
 | [docs/api.md](docs/api.md) | REST API reference |
 | [docs/mcp.md](docs/mcp.md) | MCP server reference |
 | [docs/python.md](docs/python.md) | Python bindings reference |
+| [docs/cli.md](docs/cli.md) | CLI (`ms`) reference |
+| [docs/architecture.md](docs/architecture.md) | Architecture and layering |
+| [docs/examples.md](docs/examples.md) | Rust/Python examples |
 | [docs/frontend.md](docs/frontend.md) | Web frontend |
 | [docs/engines.md](docs/engines.md) | Engine-by-engine reference and block status |
 | [docs/upstream.md](docs/upstream.md) | Upstream sources, what was borrowed, how to monitor |
@@ -107,11 +132,11 @@ Start the API server and open http://localhost:8080.
 ## Development
 
 ```bash
-cargo test --workspace     # 29 parser/merge unit tests (offline, fixtures)
-cargo run -p metasearch --bin fetch_fixtures   # re-capture live fixtures
-cargo run -p metasearch --bin dbg_parse -- bing # parse a fixture, show results
-cargo clippy --all-targets
-cargo fmt
+make check                 # fmt-check + clippy + tests (offline, ~1 s)
+make build                 # cargo build --workspace
+make release               # release binaries for cli/api/mcp
+make wheel                 # Python wheel (uv)
+make serve                 # ms serve (REST + MCP-over-TCP)
 ```
 
 Known limitation: Google, Qwant, Mojeek and the DDG HTML endpoint

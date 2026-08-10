@@ -5,6 +5,8 @@ members = [
     "crates/metasearch-api",
     "crates/metasearch-mcp",
     "crates/metasearch-python",
+    "crates/metasearch-cli",
+    "examples/rust",
 ]
 default-members = ["crates/metasearch"]
 
@@ -29,6 +31,9 @@ regex = "1"
 chrono = { version = "0.4", features = ["serde"] }
 futures = "0.3"
 rand = "0.9"
+clap = { version = "4", features = ["derive"] }
+clap_complete = "4"
+anyhow = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 pyo3 = { version = "0.24", features = ["extension-module"] }

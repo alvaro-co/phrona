@@ -188,3 +188,34 @@ extract), all fixture-free and fast (0.5 s). Bugs surfaced and fixed:
   parameter validation 400s, frontend assets), MCP JSON-RPC session
   (initialize, tools/list, tools/call including search_grounded with
   live answers), Python crate `cargo check`.
+
+## Final pass: CLI crate, examples, upstream watch
+
+- **metasearch-cli (`ms`)** - one binary for every surface: `search`,
+  `suggest`, `extract`, `ground`, `engines`, `test` (live availability
+  probe), `serve` (REST + MCP-over-TCP in one process), `mcp` (stdio),
+  `completions`. Generated completions via clap_complete; `--json`
+  everywhere; the merged response carries the per-engine report.
+- **`crates/metasearch-api/src/lib.rs`** and
+  **`crates/metasearch-mcp/src/lib.rs`** extracted so both servers are
+  embeddable libraries (axum `router()/serve()`, rmcp
+  `run_stdio()/serve_tcp()`) - the CLI composes them in one tokio
+  runtime instead of duplicating.
+- **examples/rust** workspace crate (basic, suggest, extract, ground)
+  and **examples/python** scripts (module-level functions and a
+  reusable `Client`), both exercising only the public library API.
+- **Makefile** - `make check/build/release/wheel/examples/serve`.
+- **Upstream drift monitor** (the spec's "watch for changes on the
+  upstream repos" requirement): `scripts/upstream-refs.txt` pins the 8
+  upstream projects to the commits they were verified against;
+  `scripts/watch_upstream.sh` clones each pin and checks whether it is
+  still an ancestor of the upstream tip; the `upstream-watch` GitHub
+  workflow runs it weekly and opens/updates a GitHub issue listing the
+  drifted repos (also reachable via `workflow_dispatch`). The watch
+  script depends only on git + python3 (no jq).
+- **Pin correction**: the first run of the watch caught that the ddgs
+  and websurfx pins were swapped (each repo's tip matched the other's
+  pin exactly), and that 4get, searxng, primp, wreq, wreq-util and
+  mcp-4get had moved. Pins updated to verified tips; a note in
+  docs/upstream.md records the correction. Verification shows zero
+  drift at the new pins.

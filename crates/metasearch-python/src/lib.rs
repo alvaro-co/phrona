@@ -106,6 +106,7 @@ impl Client {
     #[pyo3(signature = (query, category="web", engines=None, page=1, max_results=20,
                         safesearch="moderate", region=None, language=None,
                         time_range=None, filters=None))]
+    #[allow(clippy::too_many_arguments)]
     fn search(
         &self,
         query: &str,
