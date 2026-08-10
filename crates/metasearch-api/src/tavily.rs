@@ -109,10 +109,14 @@ pub async fn search(
     };
     let depth = req.search_depth.as_deref().unwrap_or("basic");
     if depth == "basic" {
-        opts.engines = match opts.category {
+        let mut engines = match opts.category {
             Category::News => vec!["bing_news".into(), "duckduckgo_news".into()],
             _ => vec!["bing".into(), "duckduckgo".into()],
         };
+        if req.include_answer {
+            engines.push("grokipedia".into());
+        }
+        opts.engines = engines;
     }
     if let Some(days) = req.days {
         opts.time_range = days_to_range(days);

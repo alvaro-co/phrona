@@ -139,7 +139,7 @@ Tavily-compatible endpoint for drop-in replacement in Tavily clients.
 | `days` | news recency window |
 | `max_results` | default 10 |
 | `include_images` | adds `images` field |
-| `include_answer` | adds `answer` field (from the LLM-style answer engine) |
+| `include_answer` | adds `answer` field; the grokipedia answer engine is queried for this |
 | `include_raw_content` | adds `raw_content` (full extracted page text, capped) |
 | `include_domains` / `exclude_domains` | filters returned results by host |
 
@@ -160,13 +160,15 @@ Response is the Tavily shape:
 
 ## GET|POST /v1/grounding
 
-AI grounding for RAG: returns a verbatim excerpt from the page best matching
-the query plus ranked sources, all with citation-ready attribution.
+AI grounding for RAG: returns a synthesized extractive answer plus ranked
+sources with content, all with citation-ready attribution. The library
+answer (from the grokipedia answer engine) is used verbatim when present;
+otherwise the strongest snippets are stitched into an extractive summary.
 
 Query params (GET) or JSON body (POST):
 
 ```json
-{"query": "serde json", "search": {"max_results": 5}, "max_excerpt_chars": 500}
+{"query": "serde json", "api_key": "...", "max_results": 10, "category": "web", "time_range": "week"}
 ```
 
 Response:
@@ -174,16 +176,15 @@ Response:
 ```json
 {
   "query": "serde json",
-  "summary": "short answer (derived from the top excerpt)",
-  "excerpt": "verbatim page text around the best match",
-  "page_url": "https://serde.rs/json.html",
-  "page_title": "JSON Format - serde",
-  "sources": [{"title": "...", "url": "...", "score": 0.9}]
+  "answer": "Extractive summary for \"serde json\":\nSource 1 (https://serde.rs/json.html): ...",
+  "sources": [
+    {"title": "JSON Format - serde", "url": "https://serde.rs/json.html", "content": "...", "score": 1.0}
+  ],
+  "response_time": 1.1
 }
 ```
 
-`search` is a partial GET /v1/search parameter set (query comes from the
-top-level `query`).
+`max_results` clamps to 1-50 (default 10).
 
 ## Frontend
 

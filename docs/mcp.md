@@ -50,16 +50,15 @@ Tool call results are `text/plain` content containing JSON.
 
 ## search_grounded
 
-For AI RAG workflows: performs a web search, scores the results against the
-query, fetches the best page and returns
+For AI RAG workflows: performs a web search, returns a synthesized answer
+(the library answer engine's text verbatim when present, otherwise an
+extractive summary) plus ranked sources with content:
 
 ```json
 {
   "query": "...",
-  "excerpt": "verbatim text from the best page",
-  "page_url": "...",
-  "page_title": "...",
-  "sources": [{"title": "...", "url": "...", "score": 0.92}]
+  "answer": "Extractive summary for \"...\": ...",
+  "sources": [{"title": "...", "url": "...", "content": "...", "score": 0.92}]
 }
 ```
 
