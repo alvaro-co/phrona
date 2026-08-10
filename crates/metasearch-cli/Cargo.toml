@@ -1,0 +1,23 @@
+[package]
+name = "metasearch-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Command-line interface to the metasearch library: search, suggest, extract, ground, probe"
+
+[[bin]]
+name = "ms"
+path = "src/main.rs"
+
+[dependencies]
+metasearch = { workspace = true }
+metasearch-api = { path = "../metasearch-api" }
+metasearch-mcp = { path = "../metasearch-mcp" }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+clap = { workspace = true }
+clap_complete = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }

@@ -1,0 +1,28 @@
+[package]
+name = "metasearch-examples"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Runnable examples for the metasearch library (cargo run -p metasearch-examples --bin <name>)"
+publish = false
+
+[[bin]]
+name = "basic"
+path = "src/bin/basic.rs"
+
+[[bin]]
+name = "suggest"
+path = "src/bin/suggest.rs"
+
+[[bin]]
+name = "extract"
+path = "src/bin/extract.rs"
+
+[[bin]]
+name = "ground"
+path = "src/bin/ground.rs"
+
+[dependencies]
+metasearch = { workspace = true }
+tokio = { workspace = true }
+anyhow = { workspace = true }
