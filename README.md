@@ -172,4 +172,4 @@ cleaner IP. See [docs/engines.md](docs/engines.md).
 
 ## License
 
-MIT
+[AGPL-3.0](LICENSE)

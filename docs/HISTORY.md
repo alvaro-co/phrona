@@ -253,6 +253,11 @@ extract), all fixture-free and fast (0.5 s). Bugs surfaced and fixed:
   immediately - the disabled listener completed instantly and
   `tokio::select!` returned. Now joined with `futures::try_join` so the
   enabled listener keeps running. Found by the smoke test.
+- **Auth**: Bearer auth was documented but not implemented - the API now
+  accepts `Authorization: Bearer <key>` everywhere, via one shared
+  helper (`api_key_from_headers`), instead of three ad-hoc copies.
+- **License**: AGPL-3.0 (LICENSE); Cargo.toml/pyproject.toml/README
+  metadata aligned.
 - `cargo fmt`, `cargo clippy --workspace --all-targets` (zero warnings),
   `cargo test --workspace` (64 tests), end-to-end smoke: page, css, js,
   engines?category, extract, test, search endpoints all live.
