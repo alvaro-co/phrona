@@ -203,8 +203,8 @@ pub fn js_to_json(input: &str) -> String {
     let mut str_q = '"';
     while let Some(c) = chars.next() {
         if in_str {
-            out.push(c);
             if c == '\\' {
+                out.push(c);
                 if let Some(n) = chars.next() {
                     out.push(n);
                 }
@@ -212,6 +212,11 @@ pub fn js_to_json(input: &str) -> String {
             }
             if c == str_q {
                 in_str = false;
+                // convert closing single quotes to double quotes so the
+                // output stays valid JSON
+                out.push(if str_q == '\'' { '"' } else { c });
+            } else {
+                out.push(c);
             }
             continue;
         }
@@ -232,8 +237,9 @@ pub fn js_to_json(input: &str) -> String {
                         break;
                     }
                 }
+                let is_num = ident.chars().all(|c| c.is_ascii_digit());
                 let lit = matches!(ident.as_str(), "true" | "false" | "null");
-                if !lit {
+                if !lit && !is_num {
                     out.push('"');
                     out.push_str(&ident);
                     out.push('"');
@@ -274,4 +280,90 @@ pub fn brave_response(json: &serde_json::Value) -> Option<&serde_json::Value> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn block_page_detection() {
+        for page in [
+            "enablejs=1 and a captcha",
+            "https://www.google.com/sorry/index?continue=...",
+            "captcha-delivery.com",
+            "403 - Forbidden by the server",
+            "you are an anomaly",
+            "there are no search results",
+            "too many requests, retry later",
+            "this page requires javascript to work",
+            "please enable javascript",
+            "window.SolveSimpleChallenge",
+            "<!doctype html><html><script>retry/enablejs</script>",
+        ] {
+            assert!(is_block_page(page), "marker not detected: {page}");
+        }
+        for page in ["normal page with content", "", "error 404 not found here"] {
+            assert!(!is_block_page(page), "false positive: {page}");
+        }
+    }
+
+    #[test]
+    fn brave_b64_decodes_both_variants() {
+        // padding-less input: function re-pads
+        assert_eq!(brave_b64_decode("/g:ce/aGVsbG8"), "hello");
+        // unpadded url-safe style with a '/'
+        assert_eq!(
+            brave_b64_decode(&format!("/g:ce/{}", "aHR0cHM6Ly9leGFtcGxlLmNvbS9pbWcucG5n")),
+            "https://example.com/img.png"
+        );
+        assert_eq!(brave_b64_decode("no marker here"), "");
+        assert_eq!(brave_b64_decode("/g:ce/%%%invalid%%%"), "");
+    }
+
+    #[test]
+    fn brave_dims_parse() {
+        assert_eq!(brave_dims("--width:250;--height:300"), (250, 300));
+        assert_eq!(brave_dims("--width: 0"), (0, 0));
+        assert_eq!(brave_dims(""), (0, 0));
+    }
+
+    #[test]
+    fn vqd_extraction() {
+        assert_eq!(extract_vqd("vqd=\"abc123\";x"), Some("abc123".into()));
+        assert_eq!(extract_vqd("var vqd='xy z'"), Some("xy".into()));
+        assert_eq!(extract_vqd("no token here"), None);
+    }
+
+    #[test]
+    fn clean_url_handles_protocol_relative() {
+        assert_eq!(clean_url("//example.com/a"), "https://example.com/a");
+        assert_eq!(
+            clean_url("  https://example.com/a  "),
+            "https://example.com/a"
+        );
+        assert_eq!(clean_url(""), "");
+    }
+
+    #[test]
+    fn time_and_safe_params() {
+        assert_eq!(time_param(&TimeRange::Day), "d");
+        assert_eq!(bing_time_minutes(&TimeRange::Week), "10080");
+        assert_eq!(safe_param(SafeSearch::Strict, "1", "0", "-1"), "1");
+        assert_eq!(safe_param(SafeSearch::Off, "1", "0", "-1"), "0");
+        assert_eq!(safe_param(SafeSearch::Moderate, "1", "0", "-1"), "-1");
+    }
+
+    #[test]
+    fn js_to_json_quotes_keys() {
+        let input = "{type: 'web', ok: true, n: 3, src: \"x\"}";
+        let out = js_to_json(input);
+        assert_eq!(
+            out,
+            "{\"type\": \"web\", \"ok\": true, \"n\": 3, \"src\": \"x\"}"
+        );
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["type"], "web");
+        assert_eq!(v["n"], 3);
+    }
 }

@@ -54,14 +54,15 @@ pub enum SafeSearch {
 }
 
 impl std::str::FromStr for SafeSearch {
-    type Err = std::convert::Infallible;
+    type Err = ();
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Ok(match s.to_ascii_lowercase().as_str() {
-            "off" | "none" | "0" => SafeSearch::Off,
-            "strict" | "on" | "2" => SafeSearch::Strict,
-            _ => SafeSearch::Moderate,
-        })
+        match s.to_ascii_lowercase().as_str() {
+            "off" | "none" | "0" => Ok(SafeSearch::Off),
+            "moderate" | "1" => Ok(SafeSearch::Moderate),
+            "strict" | "on" | "2" => Ok(SafeSearch::Strict),
+            _ => Err(()),
+        }
     }
 }
 

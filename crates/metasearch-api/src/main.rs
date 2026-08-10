@@ -123,7 +123,9 @@ fn build_options(p: &SearchParams, state: &AppState) -> AppResult<SearchOptions>
         opts.max_results = m.clamp(1, 100);
     }
     if let Some(s) = &p.safesearch {
-        opts.safesearch = s.parse().unwrap_or(metasearch::SafeSearch::Moderate);
+        opts.safesearch = s.parse::<metasearch::SafeSearch>().map_err(|_| {
+            AppError::bad_request("invalid safesearch, expected off|moderate|strict")
+        })?;
     }
     if let Some(t) = &p.time_range {
         opts.time_range = Some(t.parse::<TimeRange>().map_err(|_| {
