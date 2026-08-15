@@ -1,0 +1,523 @@
+pub mod frontend;
+pub mod grounding;
+pub mod tavily;
+pub mod tools;
+
+use std::net::SocketAddr;
+use std::sync::Arc;
+use std::time::Instant;
+
+use axum::extract::rejection::QueryRejection;
+use axum::extract::{FromRequest, FromRequestParts, Query, Request, State};
+use axum::http::{HeaderMap, StatusCode};
+use axum::response::{IntoResponse, Response};
+use axum::routing::{get, post};
+use axum::{Json, Router};
+use serde::Deserialize;
+use serde::de::DeserializeOwned;
+use serde_json::{Value, json};
+use tower_http::cors::CorsLayer;
+use tower_http::trace::TraceLayer;
+
+use phrona::engine;
+use phrona::error::{ErrorKind as PhronaErrorKind, ErrorScope};
+use phrona::models::{Category, ResultItem, SearchResponse, TimeRange};
+use phrona::{SearchClient, SearchOptions, suggest, suggest_all};
+
+pub struct AppState {
+    pub client: SearchClient,
+    pub started: Instant,
+    pub api_key: Option<String>,
+}
+
+impl AppState {
+    pub fn new(client: SearchClient, api_key: Option<String>) -> Self {
+        Self {
+            client,
+            started: Instant::now(),
+            api_key,
+        }
+    }
+
+    pub fn authorized(&self, key: Option<&str>) -> bool {
+        self.api_key.as_deref().is_none_or(|want| key == Some(want))
+    }
+}
+
+pub struct AppError(ErrorKind);
+
+enum ErrorKind {
+    BadRequest(String),
+    Unauthorized,
+    Internal(phrona::Error),
+}
+
+impl AppError {
+    fn bad_request(msg: impl Into<String>) -> Self {
+        Self(ErrorKind::BadRequest(msg.into()))
+    }
+
+    fn unauthorized() -> Self {
+        Self(ErrorKind::Unauthorized)
+    }
+}
+
+impl IntoResponse for AppError {
+    fn into_response(self) -> Response {
+        let (status, body) = match self.0 {
+            ErrorKind::BadRequest(msg) => (StatusCode::BAD_REQUEST, json!({"error": msg})),
+            ErrorKind::Unauthorized => (
+                StatusCode::UNAUTHORIZED,
+                json!({"error": "invalid api key"}),
+            ),
+            ErrorKind::Internal(e) => {
+                tracing::error!("search failed: {e}");
+                let status = if matches!(e.kind(), PhronaErrorKind::RateLimited { .. }) {
+                    StatusCode::TOO_MANY_REQUESTS
+                } else {
+                    match e.scope() {
+                        ErrorScope::Query => StatusCode::BAD_REQUEST,
+                        ErrorScope::Internal => StatusCode::INTERNAL_SERVER_ERROR,
+                        ErrorScope::Provider => StatusCode::SERVICE_UNAVAILABLE,
+                        ErrorScope::Egress | ErrorScope::Schema => StatusCode::BAD_GATEWAY,
+                    }
+                };
+                (status, json!({"error": e.to_string()}))
+            }
+        };
+        (status, Json(body)).into_response()
+    }
+}
+
+impl From<phrona::Error> for AppError {
+    fn from(e: phrona::Error) -> Self {
+        Self(ErrorKind::Internal(e))
+    }
+}
+
+type AppResult<T> = Result<T, AppError>;
+
+/// Query-string extractor whose rejection is a JSON 400 instead of axum's
+/// default plain-text response.
+pub struct JsonQuery<T>(pub T);
+
+impl<S, T: DeserializeOwned> FromRequestParts<S> for JsonQuery<T>
+where
+    S: Send + Sync,
+{
+    type Rejection = AppError;
+
+    async fn from_request_parts(
+        parts: &mut axum::http::request::Parts,
+        state: &S,
+    ) -> AppResult<Self> {
+        let q = Query::<T>::from_request_parts(parts, state)
+            .await
+            .map_err(|e| {
+                use std::error::Error as _;
+                let msg = match e {
+                    QueryRejection::FailedToDeserializeQueryString(e) => e
+                        .source()
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| e.to_string()),
+                    other => other.to_string(),
+                };
+                AppError::bad_request(format!("invalid query parameters: {msg}"))
+            })?;
+        Ok(Self(q.0))
+    }
+}
+
+/// JSON body extractor whose rejection (missing body, malformed JSON,
+/// wrong content type) is a JSON 400 instead of axum's defaults.
+pub struct JsonBody<T>(pub T);
+
+impl<S, T: DeserializeOwned> FromRequest<S> for JsonBody<T>
+where
+    S: Send + Sync,
+{
+    type Rejection = AppError;
+
+    async fn from_request(req: Request, state: &S) -> AppResult<Self> {
+        let Json(v) = Json::<T>::from_request(req, state)
+            .await
+            .map_err(|e| AppError::bad_request(format!("invalid JSON body: {e}")))?;
+        Ok(Self(v))
+    }
+}
+
+#[derive(Deserialize)]
+struct SearchParams {
+    q: String,
+    category: Option<String>,
+    engines: Option<String>,
+    page: Option<u32>,
+    max_results: Option<usize>,
+    safesearch: Option<String>,
+    region: Option<String>,
+    language: Option<String>,
+    time_range: Option<String>,
+    filters: Option<String>,
+    api_key: Option<String>,
+}
+
+fn build_options(p: &SearchParams, state: &AppState) -> AppResult<SearchOptions> {
+    if !state.authorized(p.api_key.as_deref()) {
+        return Err(AppError(ErrorKind::Unauthorized));
+    }
+    let mut opts = SearchOptions::new(p.q.clone());
+    if let Some(c) = &p.category {
+        opts.category = c.parse::<Category>().map_err(|_| {
+            AppError::bad_request(format!(
+                "invalid category '{c}', expected one of: web, images, news, videos, books"
+            ))
+        })?;
+    }
+    if let Some(es) = &p.engines {
+        for name in es.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+            if engine::engine_by_name(name).is_none() {
+                return Err(AppError::bad_request(format!(
+                    "unknown engine '{name}'. Available: {}",
+                    engine::list()
+                        .iter()
+                        .map(|e| e.name())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )));
+            }
+            opts.engines.push(name.to_string());
+        }
+    }
+    if let Some(page) = p.page {
+        opts.page = page.max(1);
+    }
+    if let Some(m) = p.max_results {
+        opts.max_results = m.clamp(1, 100);
+    }
+    if let Some(s) = &p.safesearch {
+        opts.safesearch = s.parse::<phrona::SafeSearch>().map_err(|_| {
+            AppError::bad_request("invalid safesearch, expected off|moderate|strict")
+        })?;
+    }
+    if let Some(t) = &p.time_range {
+        opts.time_range = Some(t.parse::<TimeRange>().map_err(|_| {
+            AppError::bad_request("invalid time_range, expected day|week|month|year")
+        })?);
+    }
+    opts.region = p.region.clone();
+    opts.language = p.language.clone();
+    opts.filters = p.filters.clone();
+    Ok(opts)
+}
+
+fn header_key(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get("x-api-key")
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_string)
+        .or_else(|| {
+            headers
+                .get(axum::http::header::AUTHORIZATION)
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.strip_prefix("Bearer ").map(str::to_string))
+        })
+}
+
+/// Extract the API key from the x-api-key header or the Authorization:
+/// Bearer header. Used by every authenticated handler.
+pub(crate) fn api_key_from_headers(headers: &HeaderMap) -> Option<String> {
+    header_key(headers)
+}
+
+fn split_results(resp: &SearchResponse) -> Vec<Value> {
+    let items: Vec<Value> = resp
+        .results
+        .iter()
+        .enumerate()
+        .map(|(i, r)| {
+            let pos = (i + 1) as f64;
+            let score = (1.0 - (pos - 1.0) * 0.05).max(0.05);
+            match r {
+                ResultItem::Web(w) => json!({
+                    "type": "web",
+                    "title": w.title,
+                    "url": w.url,
+                    "description": w.description,
+                    "score": score,
+                    "position": pos,
+                    "engines": w.engines,
+                }),
+                ResultItem::Image(i) => json!({
+                    "type": "image",
+                    "title": i.title,
+                    "url": i.url,
+                    "image_url": i.image_url,
+                    "thumbnail_url": i.thumbnail_url,
+                    "width": i.width,
+                    "height": i.height,
+                    "score": score,
+                    "position": pos,
+                    "engines": i.engines,
+                }),
+                ResultItem::News(n) => json!({
+                    "type": "news",
+                    "title": n.title,
+                    "url": n.url,
+                    "description": n.description,
+                    "published": n.published,
+                    "source": n.source,
+                    "score": score,
+                    "position": pos,
+                    "engines": n.engines,
+                }),
+                ResultItem::Video(v) => json!({
+                    "type": "video",
+                    "title": v.title,
+                    "url": v.url,
+                    "description": v.description,
+                    "thumbnail_url": v.thumbnail_url,
+                    "duration": v.duration,
+                    "views": v.views,
+                    "uploader": v.uploader,
+                    "score": score,
+                    "position": pos,
+                    "engines": v.engines,
+                }),
+                ResultItem::Book(b) => json!({
+                    "type": "book",
+                    "title": b.title,
+                    "url": b.url,
+                    "description": b.info,
+                    "author": b.author,
+                    "publisher": b.publisher,
+                    "score": score,
+                    "position": pos,
+                    "engines": b.engines,
+                }),
+            }
+        })
+        .collect();
+    items
+}
+
+async fn health(State(state): State<Arc<AppState>>) -> Json<Value> {
+    let web = engine::engines_for(Category::Web).len();
+    let images = engine::engines_for(Category::Images).len();
+    let news = engine::engines_for(Category::News).len();
+    let videos = engine::engines_for(Category::Videos).len();
+    let books = engine::engines_for(Category::Books).len();
+    Json(json!({
+        "status": "ok",
+        "version": phrona::version(),
+        "uptime_s": state.started.elapsed().as_secs(),
+        "engines": {"web": web, "images": images, "news": news, "videos": videos, "books": books},
+        "auth": state.api_key.is_some(),
+    }))
+}
+
+#[derive(Deserialize)]
+struct EnginesParams {
+    category: Option<String>,
+}
+
+async fn engines(JsonQuery(p): JsonQuery<EnginesParams>) -> AppResult<Json<Value>> {
+    let cats: Vec<Category> = match p.category.as_deref() {
+        Some(c) => vec![c.parse::<Category>().map_err(|_| {
+            AppError::bad_request(
+                "invalid category, expected one of: web, images, news, videos, books",
+            )
+        })?],
+        None => Category::ALL.to_vec(),
+    };
+    let mut out = serde_json::Map::new();
+    for cat in cats {
+        out.insert(
+            cat.as_str().to_string(),
+            json!(
+                phrona::available_engines(cat)
+                    .iter()
+                    .map(|e| e.name.clone())
+                    .collect::<Vec<_>>()
+            ),
+        );
+    }
+    Ok(Json(Value::Object(out)))
+}
+
+async fn search_route(
+    State(state): State<Arc<AppState>>,
+    JsonQuery(p): JsonQuery<SearchParams>,
+) -> AppResult<Json<Value>> {
+    let opts = build_options(&p, &state)?;
+    let resp = state.client.search(opts).await?;
+    let results = split_results(&resp);
+    let total = results.len();
+    Ok(Json(json!({
+        "query": resp.query,
+        "category": resp.category.as_str(),
+        "page": resp.page,
+        "total": total,
+        "results": results,
+        "suggestions": resp.suggestions,
+        "answer": resp.answer,
+        "engines": resp.engines,
+        "elapsed_ms": resp.elapsed_ms,
+    })))
+}
+
+#[derive(Deserialize)]
+struct SuggestParams {
+    q: String,
+    source: Option<String>,
+    region: Option<String>,
+    api_key: Option<String>,
+}
+
+async fn suggest_route(
+    State(state): State<Arc<AppState>>,
+    JsonQuery(p): JsonQuery<SuggestParams>,
+) -> AppResult<Json<Value>> {
+    if !state.authorized(p.api_key.as_deref()) {
+        return Err(AppError(ErrorKind::Unauthorized));
+    }
+    let region = p.region.unwrap_or_else(|| "us-en".to_string());
+    match p.source.as_deref() {
+        Some(name) => {
+            let source = phrona::SuggestSource::from_name(name).ok_or_else(|| {
+                AppError::bad_request(format!(
+                    "unknown suggest source '{name}', expected one of: {}",
+                    phrona::SuggestSource::ALL
+                        .iter()
+                        .map(|s| s.name())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ))
+            })?;
+            let suggestions = suggest(state.client.http(), source, &p.q, &region).await?;
+            Ok(Json(json!({
+                "query": p.q,
+                "source": name,
+                "suggestions": suggestions,
+            })))
+        }
+        None => {
+            let all = suggest_all(state.client.http(), &p.q, &region).await;
+            let suggestions: serde_json::Map<String, Value> = all
+                .into_iter()
+                .map(|(s, list)| (s.name().to_string(), json!(list)))
+                .collect();
+            Ok(Json(json!({
+                "query": p.q,
+                "suggestions": suggestions,
+            })))
+        }
+    }
+}
+
+/// Build the axum router with the given optional API key.
+pub fn router(api_key: Option<String>) -> Router {
+    let state = Arc::new(AppState::new(
+        SearchClient::new().expect("build search client"),
+        api_key,
+    ));
+
+    Router::new()
+        .route("/", get(frontend::index))
+        .route("/health", get(health))
+        .route("/v1/engines", get(engines))
+        .route("/v1/search", get(search_route))
+        .route("/v1/suggest", get(suggest_route))
+        .route(
+            "/v1/extract",
+            get(tools::extract_get).post(tools::extract_post),
+        )
+        .route("/v1/test", get(tools::test))
+        .route("/v1/grounding", get(grounding::get).post(grounding::post))
+        .route("/search", post(tavily::search))
+        .route("/v1/tavily", post(tavily::search))
+        .nest_service(
+            "/static",
+            tower_http::services::ServeDir::new(frontend::frontend_dir()),
+        )
+        .fallback(frontend::index)
+        .layer(CorsLayer::permissive())
+        .layer(TraceLayer::new_for_http())
+        .with_state(state)
+}
+
+/// Serve the REST API on `addr`. Blocks until the server stops.
+pub async fn serve(addr: SocketAddr, api_key: Option<String>) -> anyhow::Result<()> {
+    let listener = tokio::net::TcpListener::bind(addr).await?;
+    tracing::info!("phrona-api listening on http://{addr}");
+    axum::serve(listener, router(api_key)).await?;
+    Ok(())
+}
+
+/// Default bind address when none is configured.
+pub fn default_addr() -> SocketAddr {
+    "127.0.0.1:8080".parse().expect("static addr")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::Body;
+    use axum::http::Request;
+
+    #[test]
+    fn app_error_maps_to_status_codes() {
+        for (status, kind) in [
+            (StatusCode::BAD_REQUEST, ErrorKind::BadRequest("x".into())),
+            (StatusCode::UNAUTHORIZED, ErrorKind::Unauthorized),
+            (
+                StatusCode::BAD_GATEWAY,
+                ErrorKind::Internal(phrona::Error::schema("e", "bad body")),
+            ),
+            (
+                StatusCode::TOO_MANY_REQUESTS,
+                ErrorKind::Internal(phrona::Error::rate_limited("e", None)),
+            ),
+            (
+                StatusCode::BAD_REQUEST,
+                ErrorKind::Internal(phrona::Error::invalid_query("e", "bad")),
+            ),
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                ErrorKind::Internal(phrona::Error::internal("e", "boom")),
+            ),
+        ] {
+            let resp = AppError(kind).into_response();
+            assert_eq!(resp.status(), status);
+        }
+    }
+
+    #[tokio::test]
+    async fn app_error_body_is_json() {
+        let resp = AppError(ErrorKind::BadRequest("bad input".into())).into_response();
+        let body = axum::body::to_bytes(resp.into_body(), 1024).await.unwrap();
+        let v: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(v["error"], "bad input");
+    }
+
+    #[tokio::test]
+    async fn json_query_rejects_missing_fields_as_bad_request() {
+        use tower::ServiceExt;
+        let router = super::router(None);
+        let resp = router
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/search")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        let body = axum::body::to_bytes(resp.into_body(), 1024).await.unwrap();
+        let v: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(
+            v["error"].as_str().unwrap().to_lowercase(),
+            "invalid query parameters: missing field `q`"
+        );
+    }
+}

@@ -32,16 +32,21 @@ library:
 - The full query is kept in the URL hash: results are shareable and
   survive reload (e.g. `/#q=rust&category=web&max_results=20`).
 
-**Tools** - the same operations as the `ms` CLI, in the browser, each
+**Tools** - the same operations as the `phrona` CLI, in the browser, each
 against the live API with a JSON view toggle:
 
 | Tool | Endpoint | Equals |
 | --- | --- | --- |
-| suggest | `/v1/suggest` | `ms suggest` |
-| extract | `/v1/extract` | `ms extract` |
-| ground | `/v1/grounding` | `ms ground` |
-| engines | `/v1/engines` | `ms engines` |
-| test | `/v1/test` | `ms test` |
+| suggest | `/v1/suggest` | `phrona suggest` |
+| extract | `/v1/extract` | `phrona extract` |
+| ground | `/v1/grounding` | `phrona ground` |
+| engines | `/v1/engines` | `phrona engines` |
+| test | `/v1/test` | `phrona test` |
+
+When `PHRONA_API_KEY` is set on the server, enter the key in the topbar
+field (persisted in localStorage as `phrona-key`); it is sent as the
+`x-api-key` header and the `api_key` query parameter on every request.
+The theme preference is stored as `phrona-theme`.
 
 ## Files
 

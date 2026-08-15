@@ -1,18 +1,18 @@
-"""Basic usage of the metasearch Python bindings.
+"""Basic usage of the phrona Python bindings.
 
-Requires the wheel:  uv build && uv pip install dist/metasearch-*.whl
+Requires the wheel:  uv build && uv pip install dist/phrona-*.whl
 Run:  python basic.py [query]
 """
 
 import sys
-import metasearch
+import phrona
 
 query = sys.argv[1] if len(sys.argv) > 1 else "rust programming"
 
-print("version:", metasearch.version())
-print("engines:", ", ".join(metasearch.engines("web")))
+print("version:", phrona.version())
+print("engines:", ", ".join(phrona.engines("web")["web"]))
 
-resp = metasearch.search(query, max_results=5)
+resp = phrona.search(query, max_results=5)
 print(f"\nquery: {resp['query']} | category: {resp['category']} | "
       f"total: {resp['total']} | elapsed: {resp['elapsed_ms']} ms")
 

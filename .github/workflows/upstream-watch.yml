@@ -32,7 +32,7 @@ jobs:
 
 ${lines}
 
-Suggested follow-up: diff the affected repo against the pinned commit, update scripts/upstream-refs.txt only after rebasing, and verify with the fixture workflow (\`cargo run -p metasearch --bin fetch_fixtures\` + \`dbg_parse\`).`;
+Suggested follow-up: diff the affected repo against the pinned commit, update scripts/upstream-refs.txt only after rebasing, and verify with the fixture workflow (\`cargo run -p phrona --bin fetch_fixtures\` + \`dbg_parse\`).`;
             const issues = await github.rest.issues.listForRepo({
               owner: context.repo.owner,
               repo: context.repo.repo,

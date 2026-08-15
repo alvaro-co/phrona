@@ -1,10 +1,40 @@
 # HISTORY
 
-A log of how MetaSearchRS was built, commit by commit.
+A log of how Phrona was built, commit by commit.
 
-## b50d936 - chore: scaffold workspace with wreq-based impersonating HTTP client
+## (production hardening)
 
-- Workspace `MetaSearchRS` with a single library crate `metasearch`.
+- **Structured, allocation-free error system** (`error.rs`): `Error {
+  scope, kind, engine, http_status, message }`. Scopes `Egress |
+  Provider | Schema | Query | Internal`; kinds `RateLimited { retry_after }`,
+  `Blocked(Cloudflare | Captcha | IpBan | BotDetection)`,
+  `MalformedPayload { context }`, `UpstreamUnavailable { status }`,
+  `Timeout`, `NetworkFailure`, `InvalidQuery { context }`,
+  `AllProvidersFailed`. Constructor helpers plus typed
+  `From<wreq::Error>` (using `is_timeout()`/`is_connect()`/... instead of
+  string sniffing) and `From<io::Error>`. The string-based timeout sniffing
+  in `client.rs` (`map_err`) was deleted.
+- **Classifier upgraded to header signals** (`util.rs`): `cf-mitigated` /
+  `cf-challenge` / `cf-ray`+403 → `Blocked(Cloudflare)`, `x-datadome` →
+  `Blocked(Captcha)`, `429` → `RateLimited` honoring `Retry-After`, 403 →
+  `Blocked(BotDetection)`, other non-2xx → `UpstreamUnavailable`; a 2xx
+  with contradicting `Content-Type` → `MalformedPayload` (schema), not a
+  rate limit. `parse_json_body` failures → `MalformedPayload`. DDG vqd /
+  Startpage sc token failures → `Blocked(BotDetection)`. Still no body
+  phrasing anywhere.
+- **Streaming orchestrator** (`search.rs`): `FuturesUnordered` under one
+  adaptive deadline (`SearchOptions.timeout`), early exit when the merged
+  set reaches `max_results` (remaining in-flight futures cancelled), and
+  the all-empty-is-an-error bug fixed: an error (`AllProvidersFailed`)
+  only when every engine failed; otherwise empty results are honest.
+- **`EngineReport`** gains `scope`/`kind` labels (`#[serde(default)]`) for
+  failed engines; `Error::NoResults` removed.
+- **REST API** maps error scope to HTTP status: 400 (Query), 429
+  (RateLimited), 500 (Internal), 502 (Egress/Schema), 503 (Provider).
+
+## c53cf7a - chore: scaffold workspace with wreq-based impersonating HTTP client
+
+- Workspace `Phrona` with a single library crate `phrona`.
 - `HttpClient`/`HttpClientBuilder` wrapping `wreq 6.0.0-rc.29` +
   `wreq-util 3.0.0-rc.14`: TLS fingerprint spoofing via `Profile`
   (Chrome 100-149, Firefox 139-148, Safari 26, Edge 148, Opera 131,
@@ -19,9 +49,9 @@ A log of how MetaSearchRS was built, commit by commit.
 ## (engine development phase)
 
 Engine-by-engine implementation, each engine in
-`crates/metasearch/src/engines/*.rs`, driven by the fixture loop:
+`crates/phrona/src/engines/*.rs`, driven by the fixture loop:
 `fetch_fixtures <engine>` -> `dbg_parse <engine>` -> fix parser ->
-commit. 25 engines across web/images/news/videos/books plus 7
+commit. 26 engines across web/images/news/videos/books plus 7
 suggestion sources (DuckDuckGo, Google, Bing, Brave, Startpage, Qwant,
 Wikipedia).
 
@@ -56,19 +86,21 @@ Highlights and hard-won details:
 
 Hard truth learned: this network's IP is rate-limited/captcha'd by
 Google (429 enablejs), Mojeek (403), Qwant (DataDome) and DuckDuckGo
-(anomaly page). These are *environmental*, not parser bugs. Introduced
-`is_block_page()` to recognize bot pages, so fixtures never get polluted
-and parser tests skip block pages gracefully.
+(anomaly page). These are *environmental*, not parser bugs. Responses are
+classified from HTTP semantics alone (status + `Content-Type`), and
+`fetch_fixtures` only keeps captures that parse to results, so fixtures
+never get polluted and parser tests skip non-SERP captures gracefully.
 
-## c8eb2a2 - engines: fix bing_videos noscript parsing, tolerant tests for bot-blocked fixtures, clippy cleanup
+## 1a0857d - engines: fix bing_videos noscript parsing, tolerant tests for bot-blocked fixtures, clippy cleanup
 
 - `regex_strip_noscript` fix for bing videos (see above).
-- All `parse_fixture` tests guard on `is_block_page`; `fetch_fixtures`
-  never overwrites good fixtures with block pages.
+- All `parse_fixture` tests consult the capture metadata (`fixture_parses`);
+  `fetch_fixtures` validates captures by parsing them and never overwrites
+  good fixtures with block pages.
 - `brave_b64_decode` handles standard base64.
 - Clippy cleanup across engines.
 
-## c42caff - fetch_fixtures: fix Job future lifetime for non-static engine requests
+## 589953f - fetch_fixtures: fix Job future lifetime for non-static engine requests
 
 - The fixture-fetching dev tool generalized the search invocation to
   per-engine requests; the `Job` future needed an explicit lifetime
@@ -91,23 +123,23 @@ and parser tests skip block pages gracefully.
   `FromStr` types; full sync + async APIs; `SearchClient` for connection
   reuse.
 
-## 0aafbc9 - api: axum REST server with search, suggest, engines, health, Tavily-compatible /search, AI grounding
+## 683f068 - api: axum REST server with search, suggest, engines, health, Tavily-compatible /search, AI grounding
 
-- `metasearch-api` (axum 0.8 + tower-http):
+- `phrona-api` (axum 0.8 + tower-http):
   - `GET /` (frontend), `/health`, `/v1/engines`, `/v1/search`,
     `/v1/suggest`, `GET|POST /v1/grounding`.
   - `POST /search` + `POST /v1/tavily`: Tavily-compatible endpoint
     (search_depth, topic, days, include_images/answer/raw_content,
     include/exclude_domains) so Tavily clients work unchanged.
-  - Optional auth via `META_API_KEY` (header/query/body); permissive
+  - Optional auth via `PHRONA_API_KEY` (header/query/body); permissive
     CORS; tracing.
   - Decision: serve the frontend as **static files from the repo dir**
     (no embedding, no build step) - `frontend.rs` maps known asset
     paths, everything else falls back to the app shell.
 
-## 5fb62eb - mcp: Model Context Protocol stdio server exposing metasearch tools to AI agents
+## 2ffd027 - mcp: Model Context Protocol stdio server exposing phrona tools to AI agents
 
-- `metasearch-mcp` (rmcp 3.1, features `server` + `transport-io`,
+- `phrona-mcp` (rmcp 3.1, features `server` + `transport-io`,
   schemars, anyhow): 9 tools - web_search, image_search, news_search,
   video_search, book_search, suggest, fetch_page, search_grounded,
   list_engines.
@@ -116,10 +148,10 @@ and parser tests skip block pages gracefully.
 - `search_grounded` implements the RAG pattern: search, score, fetch the
   best page, return a verbatim excerpt + ranked sources.
 
-## 83901ce - python: pyo3 bindings with setuptools-rust wheel packaging (uv build verified)
+## c676291 - python: pyo3 bindings with setuptools-rust wheel packaging (uv build verified)
 
-- `metasearch-python`: pyo3 0.24; cdylib named `metasearch`; the
-  internal Rust crate is aliased `metasearch-core` to avoid a name
+- `phrona-python`: pyo3 0.24; cdylib named `phrona`; the
+  internal Rust crate is aliased `phrona` to avoid a name
   collision on the produced artifacts.
 - `Client` pyclass (profile + timeout, full SearchOptions kwargs) plus
   module-level `search`/`suggest`/`extract`/`engines`/`version`;
@@ -128,12 +160,12 @@ and parser tests skip block pages gracefully.
   the same JSON conversion path.
 - Wheel packaging: workspace `pyproject.toml` with setuptools-rust,
   `[[tool.setuptools-rust.ext-modules]]` keyed by target name; verified
-  with `uv build` -> `dist/metasearch-0.1.0-cp312-cp312-linux_x86_64.whl`
+  with `uv build` -> `dist/phrona-0.1.0-cp312-cp312-linux_x86_64.whl`
   -> fresh venv install -> all functions called successfully.
 - Verified quirk: pyo3 0.24 segfaults on CPython 3.14; Python <= 3.13
   only.
 
-## 9d05a85 - frontend: Material 3 style static SPA served by the API server
+## 68910b0 - frontend: Material 3 style static SPA served by the API server
 
 - `frontend/`: `index.html` + `style.css` (Material 3 tokens, light/dark
   themes, chips, cards, responsive image grid) + `app.js` (debounced
@@ -143,7 +175,7 @@ and parser tests skip block pages gracefully.
   `Path<Vec<String>>` extractor receives an empty vec in fallback
   handlers - read `req.uri().path()` instead).
 
-## 094d8e9 - answer: grokipedia emits an answer marker; Tavily include_answer queries the answer engine
+## 17683e2 - answer: grokipedia emits an answer marker; Tavily include_answer queries the answer engine
 
 - The `answer` field was dead: no engine ever returned a URL-less marker,
   so `SearchResponse.answer` was always None and Tavily's `include_answer`
@@ -159,7 +191,7 @@ and parser tests skip block pages gracefully.
 - docs: grounding and search_grounded response shapes corrected to the
   implemented {query, answer, sources[]} contract.
 
-## 00990e1 - tests: 35 new offline tests (64 total); five real bugs fixed
+## 7dbde80 - tests: 35 new offline tests (64 total); five real bugs fixed
 
 New test modules per subsystem (dedup, rank, options, util, suggest,
 extract), all fixture-free and fast (0.5 s). Bugs surfaced and fixed:
@@ -191,13 +223,13 @@ extract), all fixture-free and fast (0.5 s). Bugs surfaced and fixed:
 
 ## Final pass: CLI crate, examples, upstream watch
 
-- **metasearch-cli (`ms`)** - one binary for every surface: `search`,
+- **phrona-cli (`phrona`)** - one binary for every surface: `search`,
   `suggest`, `extract`, `ground`, `engines`, `test` (live availability
   probe), `serve` (REST + MCP-over-TCP in one process), `mcp` (stdio),
   `completions`. Generated completions via clap_complete; `--json`
   everywhere; the merged response carries the per-engine report.
-- **`crates/metasearch-api/src/lib.rs`** and
-  **`crates/metasearch-mcp/src/lib.rs`** extracted so both servers are
+- **`crates/phrona-api/src/lib.rs`** and
+  **`crates/phrona-mcp/src/lib.rs`** extracted so both servers are
   embeddable libraries (axum `router()/serve()`, rmcp
   `run_stdio()/serve_tcp()`) - the CLI composes them in one tokio
   runtime instead of duplicating.
@@ -224,11 +256,11 @@ extract), all fixture-free and fast (0.5 s). Bugs surfaced and fixed:
 
 - **API completeness**: `/v1/engines` accepts an optional `category`;
   new `/v1/extract` (GET/POST, the library's `extract` feature) and
-  `/v1/test` (the `ms test` availability probe) so every CLI capability
+  `/v1/test` (the `phrona test` availability probe) so every CLI capability
   is reachable over HTTP.
-- **CLI completeness**: `ms extract` takes multiple URLs (parallel via
-  `extract_many`); `ms ground` accepts the full option set (category,
-  region, language, time range, safesearch, filters, page); `ms test`
+- **CLI completeness**: `phrona extract` takes multiple URLs (parallel via
+  `extract_many`); `phrona ground` accepts the full option set (category,
+  region, language, time range, safesearch, filters, page); `phrona test`
   gained `--max-results`.
 - **MCP completeness**: the search tools now expose `safesearch`,
   `language`, `filters` and `page` (the docs already promised them).
@@ -245,11 +277,11 @@ extract), all fixture-free and fast (0.5 s). Bugs surfaced and fixed:
   impossible; the static-page + REST API split is the correct
   architecture.
 - **Release workflow**: `.github/workflows/release.yml` - push a `v*`
-  tag to build `ms`/`metasearch-api`/`metasearch-mcp` for linux
+  tag to build `phrona`/`phrona-api`/`phrona-mcp` for linux
   x86_64/aarch64, windows x86_64, macos aarch64 plus the Python wheel,
   and publish a GitHub Release with sha256 checksums. Documented in
   docs/releasing.md.
-- **Bug fixed**: `ms serve --no-mcp` (and `--no-rest`) exited
+- **Bug fixed**: `phrona serve --no-mcp` (and `--no-rest`) exited
   immediately - the disabled listener completed instantly and
   `tokio::select!` returned. Now joined with `futures::try_join` so the
   enabled listener keeps running. Found by the smoke test.

@@ -3,19 +3,20 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>MetaSearchRS</title>
-<meta name="description" content="Privacy-friendly metasearch across 25 engines.">
+<title>Phrona</title>
+<meta name="description" content="Privacy-friendly metasearch across 26 engines.">
 <link rel="stylesheet" href="/style.css">
 </head>
 <body>
 <header class="topbar">
   <div class="topbar-inner">
-    <span class="brand">MetaSearchRS</span>
+    <span class="brand">Phrona</span>
     <nav class="tabs">
       <button class="tab active" data-view="search">Search</button>
       <button class="tab" data-view="tools">Tools</button>
     </nav>
     <span class="spacer"></span>
+    <input id="api-key" class="text-input narrow" type="password" placeholder="API key" title="API key (sent as x-api-key)" autocomplete="off">
     <button id="theme-btn" class="icon-btn" title="Toggle theme" aria-label="Toggle theme"></button>
   </div>
 </header>
@@ -170,7 +171,7 @@
   </section>
 </main>
 
-<footer class="foot">Powered by MetaSearchRS — requests are routed through multiple engines and merged locally.</footer>
+<footer class="foot">Powered by Phrona — requests are routed through multiple engines and merged locally.</footer>
 <script src="/app.js"></script>
 </body>
 </html>

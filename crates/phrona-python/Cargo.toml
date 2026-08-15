@@ -1,0 +1,19 @@
+[package]
+name = "phrona-python"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+documentation = "https://docs.rs/phrona-python"
+description = "Python bindings (pyo3) for the phrona library"
+
+[lib]
+name = "phrona"
+crate-type = ["cdylib"]
+
+[dependencies]
+phrona-core = { package = "phrona", path = "../phrona" }
+pyo3 = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }

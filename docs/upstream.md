@@ -1,6 +1,6 @@
 # Upstream sources
 
-MetaSearchRS borrows approach, endpoints and code patterns from several open
+Phrona borrows approach, endpoints and code patterns from several open
 source projects. Pinned commits are recorded in
 `scripts/upstream-refs.txt`; the `upstream-watch` GitHub workflow
 (and `scripts/watch_upstream.sh` locally) reports when any upstream moves
@@ -22,7 +22,7 @@ HTML and the Qwant API. Borrowed from it:
 - the pragmatic approach of parsing engine HTML without a browser.
 
 Monitor: when 4get changes its engine modules, the endpoints in
-`crates/metasearch/src/engines/` are likely to break too.
+`crates/phrona/src/engines/` are likely to break too.
 
 ## SearXNG (https://github.com/searxng/searxng) @ 0a118066
 
@@ -71,7 +71,7 @@ The HTTP/2 stack itself: TLS fingerprint spoofing with `Profile`/`Emulation`
 (Chrome 100-149, Firefox 139-148, Safari 26, Edge 148, Opera 131, OkHttp),
 HTTP/2 upgrade, connection pooling. This is the core anti-bot technology in
 the project; upstream API changes require a coordinated update of
-`HttpClient` (`crates/metasearch/src/client.rs`).
+`HttpClient` (`crates/phrona/src/client.rs`).
 
 ## mcp-4get (https://github.com/yshalsager/mcp-4get) @ dd59cb7
 
@@ -99,6 +99,6 @@ re-verify with the fixture workflow, then bump the pin in
 `scripts/upstream-refs.txt`:
 
 ```bash
-cargo run -p metasearch --bin fetch_fixtures -- bing
-cargo run -p metasearch --bin dbg_parse -- bing
+cargo run -p phrona --bin fetch_fixtures -- bing
+cargo run -p phrona --bin dbg_parse -- bing
 ```

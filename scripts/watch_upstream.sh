@@ -43,6 +43,13 @@ while IFS= read -r line; do
   tip="$(git -C "$TMP/$name" rev-parse --short origin/HEAD 2>/dev/null || git -C "$TMP/$name" rev-parse --short origin/master 2>/dev/null || true)"
   [ -z "$tip" ] && continue
 
+  # pinned commit may be beyond the shallow fetch depth; only judge when
+  # it is actually present locally (otherwise a false "drift" report)
+  if ! git -C "$TMP/$name" cat-file -e "$pinned^{commit}" 2>/dev/null; then
+    echo "  (skipping $name: pinned commit $pinned not fetched in shallow clone)" >&2
+    continue
+  fi
+
   # moved on if the pinned commit is not an ancestor of the tip
   if ! git -C "$TMP/$name" merge-base --is-ancestor "$pinned" "$tip" 2>/dev/null; then
     changed+=("$name: pinned $pinned, tip $tip ($url)")

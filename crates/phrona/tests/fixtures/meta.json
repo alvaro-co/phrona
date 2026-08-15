@@ -1,0 +1,158 @@
+{
+  "annas_archive.html": {
+    "bytes": 757078,
+    "status": 200,
+    "content_type": "text/html",
+    "parsed": true
+  },
+  "bing_images.html": {
+    "bytes": 314507,
+    "status": 200,
+    "content_type": "text/html",
+    "parsed": true
+  },
+  "bing_news.html": {
+    "bytes": 7301,
+    "status": 200,
+    "content_type": "text/html",
+    "parsed": true
+  },
+  "bing_videos.html": {
+    "bytes": 243238,
+    "status": 200,
+    "content_type": "text/html",
+    "parsed": true
+  },
+  "bing_web.html": {
+    "bytes": 124096,
+    "status": 200,
+    "content_type": "text/html",
+    "parsed": true
+  },
+  "brave_images.html": {
+    "bytes": 666146,
+    "status": 200,
+    "content_type": "text/html",
+    "parsed": true
+  },
+  "brave_news.html": {
+    "bytes": 201778,
+    "status": 200,
+    "content_type": "text/html",
+    "parsed": true
+  },
+  "brave_videos.html": {
+    "bytes": 333311,
+    "status": 200,
+    "content_type": "text/html",
+    "parsed": true
+  },
+  "brave_web.html": {
+    "bytes": 323273,
+    "status": 200,
+    "content_type": "text/html",
+    "parsed": true
+  },
+  "ddg_images.json": {
+    "bytes": 122477,
+    "status": 200,
+    "content_type": "application/json",
+    "parsed": true
+  },
+  "ddg_news.json": {
+    "bytes": 7809,
+    "status": 200,
+    "content_type": "application/json",
+    "parsed": true
+  },
+  "ddg_videos.json": {
+    "bytes": 72475,
+    "status": 200,
+    "content_type": "application/json",
+    "parsed": true
+  },
+  "ddg_web.html": {
+    "bytes": 14235,
+    "status": 200,
+    "content_type": "text/html",
+    "parsed": false
+  },
+  "google_images.json": {
+    "bytes": 3387,
+    "status": 200,
+    "content_type": "text/html",
+    "parsed": false
+  },
+  "google_web.html": {
+    "bytes": 3402,
+    "status": 200,
+    "content_type": "text/html",
+    "parsed": false
+  },
+  "grokipedia.json": {
+    "bytes": 857,
+    "status": 200,
+    "content_type": "application/json",
+    "parsed": true
+  },
+  "marginalia_web.html": {
+    "bytes": 53087,
+    "status": 200,
+    "content_type": "text/html",
+    "parsed": true
+  },
+  "mojeek_images.html": {
+    "bytes": 337,
+    "status": 200,
+    "content_type": "text/html",
+    "parsed": false
+  },
+  "mojeek_web.html": {
+    "bytes": 337,
+    "status": 200,
+    "content_type": "text/html",
+    "parsed": false
+  },
+  "qwant_web.json": {
+    "bytes": 769,
+    "status": 200,
+    "content_type": "application/json",
+    "parsed": false
+  },
+  "startpage_images.html": {
+    "bytes": 686981,
+    "status": 200,
+    "content_type": "text/html",
+    "parsed": true
+  },
+  "startpage_web.html": {
+    "bytes": 240270,
+    "status": 200,
+    "content_type": "text/html",
+    "parsed": true
+  },
+  "wikipedia_opensearch.json": {
+    "bytes": 287,
+    "status": 200,
+    "content_type": "application/json",
+    "parsed": true
+  },
+  "yahoo_news.html": {
+    "bytes": 168817,
+    "status": 200,
+    "content_type": "text/html",
+    "parsed": true
+  },
+  "yahoo_web.html": {
+    "bytes": 226942,
+    "status": 200,
+    "content_type": "text/html",
+    "parsed": true
+  },
+  "yandex_web.html": {
+    "bytes": 49329,
+    "status": 200,
+    "content_type": "text/html",
+    "parsed": false
+  }
+}

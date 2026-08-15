@@ -20,21 +20,22 @@ test:
 check: fmt-check lint test
 
 release:
-	cargo build --release -p metasearch-cli -p metasearch-api -p metasearch-mcp
+	cargo build --release -p phrona-cli -p phrona-api -p phrona-mcp
 
 wheel:
 	uv build
 
 examples: release
-	cargo run -p metasearch-examples --bin basic -- "rust programming"
-	cargo run -p metasearch-examples --bin suggest -- "rust"
-	cargo run -p metasearch-examples --bin extract
+	cargo run -p phrona-examples --bin basic -- "rust programming"
+	cargo run -p phrona-examples --bin suggest -- "rust"
+	cargo run -p phrona-examples --bin extract
+	cargo run -p phrona-examples --bin ground
 
 serve-api:
-	cargo run -p metasearch-cli -- serve --no-mcp
+	cargo run -p phrona-cli -- serve --no-mcp
 
 serve-all:
-	cargo run -p metasearch-cli -- serve
+	cargo run -p phrona-cli -- serve
 
 clean:
 	cargo clean

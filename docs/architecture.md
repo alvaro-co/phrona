@@ -1,16 +1,16 @@
 # Architecture
 
 Six crates, one core. Every surface is a thin composition over the
-`metasearch` library; nothing in the core knows about HTTP servers, MCP,
+`phrona` library; nothing in the core knows about HTTP servers, MCP,
 Python or the web UI.
 
 ```text
-                  metasearch (core library)
+                  phrona (core library)
                  engines | dedup | rank | extract | suggest
                    client | options | models | parse
         |              |              |              |
-  metasearch-api   metasearch-mcp  metasearch-python  metasearch-cli
-   (axum REST)      (rmcp MCP)      (pyo3 bindings)   (ms: all-in-one)
+  phrona-api   phrona-mcp  phrona-python  phrona-cli
+   (axum REST)      (rmcp MCP)      (pyo3 bindings)   (phrona: all-in-one)
         |              |                |                |
       frontend/    stdio server      wheel (uv)     + embedds api+mcp
       (static SPA)  + tcp server
@@ -18,19 +18,19 @@ Python or the web UI.
 
 ## Layering rules
 
-- `metasearch` depends on nothing from the workspace (wreq, serde,
+- `phrona` depends on nothing from the workspace (wreq, serde,
   scraper, tokio, ... only).
-- `metasearch-api` depends on `metasearch`; exposes `router(api_key)`,
-  `serve(addr, api_key)` and `serve_from_env()`. Its binary is a thin
-  wrapper (`cargo run -p metasearch-api`).
-- `metasearch-mcp` depends on `metasearch`; exposes `run_stdio()` and
+- `phrona-api` depends on `phrona`; exposes `router(api_key)` and
+  `serve(addr, api_key)`. Its binary is a thin
+  wrapper (`cargo run -p phrona-api`).
+- `phrona-mcp` depends on `phrona`; exposes `run_stdio()` and
   `serve_tcp(listener)`. Its binary is a thin wrapper.
-- `metasearch-cli` depends on all three above and composes them: search
-  etc. use the core directly, `ms serve` runs the REST router and the
-  MCP TCP listener in one tokio runtime, `ms mcp` runs the stdio server.
-- `metasearch-python` depends on `metasearch` (aliased `metasearch-core`
+- `phrona-cli` depends on all three above and composes them: search
+  etc. use the core directly, `phrona serve` runs the REST router and the
+  MCP TCP listener in one tokio runtime, `phrona mcp` runs the stdio server.
+- `phrona-python` depends on `phrona` (aliased `phrona`
   to avoid cdylib name collision) and is packaged as a wheel.
-- `examples/rust` depends only on `metasearch`.
+- `examples/rust` depends only on `phrona`.
 
 Composition instead of duplication: there is exactly one implementation of
 search, merging, ranking, extraction, the REST routes and the MCP tools;
@@ -40,22 +40,32 @@ every interface is a different door into the same code.
 
 | Module | Responsibility |
 | --- | --- |
-| `client` | wreq wrapper: impersonation profiles, cookies, redirects, proxies, timeouts |
-| `engines` | 25 engine modules + 7 suggestion sources, each stateless and testable via fixtures |
+| `client` | wreq wrapper: impersonation profiles, cookie jar, redirects, optional proxy, timeouts |
+| `engines` | 26 engine modules + 7 suggestion sources, each stateless and testable via fixtures |
 | `engine` | `Engine` trait, per-search context, shared token caches (DDG vqd, Startpage sc) |
 | `dedup` | URL normalization, tracking-param stripping, cross-engine grouping |
 | `rank` | agreement + position + text-match scoring, wikipedia bonus |
-| `search` | parallel fan-out, per-engine error isolation, answer routing, sync/async |
+| `search` | streaming fan-out (`FuturesUnordered`), adaptive deadline + early exit, per-engine error isolation, answer routing, sync/async |
 | `extract` | readable-text extraction and query-biased excerpts (grounding) |
-| `options` | `SearchOptions` with categories, regions, time ranges, safesearch, filters, profiles, proxies |
+| `options` | `SearchOptions` with categories, regions, time ranges, safesearch, filters |
 | `models` | `ResultItem` union (web/image/news/video/book), `SearchResponse`, `EngineReport` |
+| `error` | structured `Error { scope, kind, engine, http_status, message }` — allocation-free, typed `From<wreq::Error>` |
 
 ## Availability design
 
-- Engines run in parallel and are isolated: one failing engine never
-  blocks the others; failures are reported per engine in the response.
-- `is_block_page` keeps captcha/rate-limit pages out of fixtures and
-  lets parsers degrade to zero results gracefully.
+- Engines run concurrently (`FuturesUnordered`) under one adaptive deadline
+  (`SearchOptions.timeout`); as soon as the merged set reaches
+  `max_results`, remaining in-flight futures are cancelled and the search
+  returns early. One failing engine never blocks the others; failures are
+  reported per engine in the response (`EngineReport.status/error/scope/kind`).
+- Every response is classified from HTTP semantics alone (status code,
+  anti-bot headers like `cf-mitigated`/`cf-ray`, `Retry-After`, and
+  `Content-Type`) in `util::check_response`, never from body phrasing; a 2xx
+  page that the parser can't turn into results degrades to zero gracefully.
+- Errors carry a `scope` (egress block vs provider outage vs schema drift vs
+  query problem vs internal) plus the observable `kind`, so callers can
+  react differently; an error is only raised when *every* engine failed
+  (`AllProvidersFailed`), otherwise empty results are honest.
 - The `test` command and `/health` expose live availability for
   monitoring.
 - The `upstream-watch` workflow detects when the scraped upstream
@@ -63,7 +73,7 @@ every interface is a different door into the same code.
 
 ## Adding a surface
 
-A new interface (e.g. a TUI or a plugin system) depends on `metasearch`
+A new interface (e.g. a TUI or a plugin system) depends on `phrona`
 and reuses `SearchClient`/`search`/`extract`/`suggest`. No core changes
 are needed unless a new engine or feature is added, in which case the
 pattern is: engine module + fixture + `parse_fixture` test (see

@@ -1,10 +1,21 @@
 [project]
-name = "metasearch"
+name = "phrona"
 version = "0.1.0"
 description = "High-performance metasearch engine library - Rust core with Python bindings"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.9,<3.14"
 license = "AGPL-3.0-only"
+keywords = ["phrona", "search-engine", "web-search", "api", "mcp"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Rust",
+    "Operating System :: OS Independent",
+    "Topic :: Internet :: WWW/HTTP :: Indexing/Search",
+]
+
+[project.urls]
+Homepage = "https://github.com/phrona/phrona"
+Repository = "https://github.com/phrona/phrona"
 
 [build-system]
 requires = ["setuptools-rust>=1.10"]
@@ -14,8 +25,8 @@ build-backend = "setuptools.build_meta"
 bin = false
 
 [[tool.setuptools-rust.ext-modules]]
-target = "metasearch"
-path = "crates/metasearch-python/Cargo.toml"
+target = "phrona"
+path = "crates/phrona-python/Cargo.toml"
 
 [tool.setuptools]
 py-modules = []

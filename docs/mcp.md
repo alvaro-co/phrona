@@ -1,6 +1,6 @@
 # MCP server reference
 
-`cargo run -p metasearch-mcp`
+`cargo run -p phrona-mcp`
 
 A Model Context Protocol server over stdio (JSON-RPC 2.0, protocol version
 2025-11-25). Compatible with any MCP client - Claude Desktop, claude-code,
@@ -14,8 +14,8 @@ Claude Desktop (`claude_desktop_config.json`):
 ```json
 {
   "mcpServers": {
-    "metasearch": {
-      "command": "/path/to/MetaSearchRS/target/release/metasearch-mcp"
+    "phrona": {
+      "command": "/path/to/phrona/target/release/phrona-mcp"
     }
   }
 }
@@ -24,7 +24,7 @@ Claude Desktop (`claude_desktop_config.json`):
 claude-code:
 
 ```bash
-claude mcp add metasearch -- /path/to/MetaSearchRS/target/release/metasearch-mcp
+claude mcp add phrona -- /path/to/phrona/target/release/phrona-mcp
 ```
 
 Any client that can run a command. The binary speaks MCP on stdin/stdout -
@@ -67,7 +67,7 @@ so the model can answer with actual cited content instead of paraphrasing.
 ## Raw JSON-RPC (for debugging without a client)
 
 ```bash
-printf '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"test","version":"0.1"}}}\n{"jsonrpc":"2.0","method":"notifications/initialized"}\n{"jsonrpc":"2.0","id":2,"method":"tools/list"}\n' | ./target/release/metasearch-mcp
+printf '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"test","version":"0.1"}}}\n{"jsonrpc":"2.0","method":"notifications/initialized"}\n{"jsonrpc":"2.0","id":2,"method":"tools/list"}\n' | ./target/release/phrona-mcp
 ```
 
 Each message must be one line (newline-delimited JSON). `tools/call` uses

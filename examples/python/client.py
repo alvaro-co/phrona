@@ -5,16 +5,16 @@ Run:  python client.py [query]
 
 import sys
 
-import metasearch
+import phrona
 
 query = sys.argv[1] if len(sys.argv) > 1 else "rust ownership"
 
-client = metasearch.Client(profile="chrome", timeout=20)
+client = phrona.Client(profile="chrome", timeout=20)
 
 # Suggestions from a single source and from all sources.
-print("suggest (bing):", metasearch.suggest("rus", source="bing", region="us-en"))
-all_sugg = metasearch.suggest("rus")
-for source, items in all_sugg.items():
+print("suggest (bing):", phrona.suggest("rus", source="bing", region="us-en"))
+all_sugg = phrona.suggest("rus")
+for source, items in all_sugg["suggestions"].items():
     print(f"suggest ({source}): {items[:4]}")
 
 # Search through the client with full options.
@@ -39,4 +39,4 @@ print(f"  text: {page['text'][:200]}...")
 # Grounded output: best answer plus cited sources.
 print("\nengines by category:")
 for cat in ("web", "images", "news", "videos", "books"):
-    print(f"  {cat}: {len(metasearch.engines(cat))} engines")
+    print(f"  {cat}: {len(phrona.engines(cat)[cat])} engines")

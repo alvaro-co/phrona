@@ -1,0 +1,31 @@
+[package]
+name = "phrona"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "High-performance metasearch engine library for Rust and Python"
+repository.workspace = true
+homepage = "https://github.com/phrona/phrona"
+keywords = ["metasearch", "search-engine", "web-scraping", "serp", "aggregator"]
+categories = ["web-programming", "network-programming"]
+
+[dependencies]
+wreq = { workspace = true }
+wreq-util = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+scraper = { workspace = true }
+url = { workspace = true }
+percent-encoding = { workspace = true }
+regex = { workspace = true }
+chrono = { workspace = true }
+futures = { workspace = true }
+rand = { workspace = true }
+base64 = "0.22"
+async-trait = "0.1"
+
+[lib]
+name = "phrona"
+path = "src/lib.rs"

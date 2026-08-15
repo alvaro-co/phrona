@@ -1226,96 +1226,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "metasearch"
-version = "0.1.0"
-dependencies = [
- "async-trait",
- "base64 0.22.1",
- "chrono",
- "futures",
- "percent-encoding",
- "rand",
- "regex",
- "scraper",
- "serde",
- "serde_json",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "url",
- "wreq",
- "wreq-util",
-]
-
-[[package]]
-name = "metasearch-api"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "axum",
- "metasearch",
- "serde",
- "serde_json",
- "tokio",
- "tower-http",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "metasearch-cli"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "clap_complete",
- "futures",
- "metasearch",
- "metasearch-api",
- "metasearch-mcp",
- "serde",
- "serde_json",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "metasearch-examples"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "metasearch",
- "tokio",
-]
-
-[[package]]
-name = "metasearch-mcp"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "metasearch",
- "rmcp",
- "schemars",
- "serde",
- "serde_json",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "metasearch-python"
-version = "0.1.0"
-dependencies = [
- "metasearch",
- "pyo3",
- "serde",
- "serde_json",
- "tokio",
-]
-
-[[package]]
 name = "mime"
 version = "0.3.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1507,6 +1417,96 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e57fef6bc5981e38c2ce2d63bfa546861309f875b8a75f092d1d54ae2d64f266"
 dependencies = [
  "siphasher",
+]
+
+[[package]]
+name = "phrona"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "base64 0.22.1",
+ "chrono",
+ "futures",
+ "percent-encoding",
+ "rand",
+ "regex",
+ "scraper",
+ "serde",
+ "serde_json",
+ "tokio",
+ "url",
+ "wreq",
+ "wreq-util",
+]
+
+[[package]]
+name = "phrona-api"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "http-body-util",
+ "phrona",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tower",
+ "tower-http",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "phrona-cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "clap_complete",
+ "futures",
+ "phrona",
+ "phrona-api",
+ "phrona-mcp",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "phrona-examples"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "phrona",
+ "tokio",
+]
+
+[[package]]
+name = "phrona-mcp"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "phrona",
+ "rmcp",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "phrona-python"
+version = "0.1.0"
+dependencies = [
+ "phrona",
+ "pyo3",
+ "serde",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]
