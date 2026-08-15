@@ -1,8 +1,8 @@
 //! Suggestions from every autocomplete source, single and aggregated.
 //!
-//! Run with: cargo run -p metasearch-examples --bin suggest -- "rust"
+//! Run with: cargo run -p phrona-examples --bin suggest -- "rust"
 
-use metasearch::{SearchClient, SuggestSource, suggest, suggest_all};
+use phrona::{SearchClient, SuggestSource, suggest, suggest_all};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

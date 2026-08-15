@@ -1,9 +1,9 @@
 //! Basic search: sync, async and the typed result accessors.
 //!
-//! Run with: cargo run -p metasearch-examples --bin basic -- "rust programming"
+//! Run with: cargo run -p phrona-examples --bin basic -- "rust programming"
 //! (query argument optional, defaults to "rust programming")
 
-use metasearch::{SearchOptions, search, search_sync};
+use phrona::{SearchOptions, search, search_sync};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -28,7 +28,7 @@ async fn main() -> anyhow::Result<()> {
     );
 
     // Async with a reusable client (connection pooling, shared tokens).
-    let client = metasearch::SearchClient::new()?;
+    let client = phrona::SearchClient::new()?;
     let mut opts = SearchOptions::new(query);
     opts.max_results = 8;
     let resp = client.search(opts).await?;

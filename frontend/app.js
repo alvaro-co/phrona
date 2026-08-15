@@ -14,10 +14,10 @@ function esc(s) {
 
 const setTheme = (t) => {
   document.documentElement.dataset.theme = t;
-  localStorage.setItem("meta-theme", t);
+  localStorage.setItem("phrona-theme", t);
   $("theme-btn").textContent = t === "dark" ? "\u263e" : "\u263d";
 };
-setTheme(localStorage.getItem("meta-theme") || "light");
+setTheme(localStorage.getItem("phrona-theme") || "light");
 $("theme-btn").addEventListener("click", () =>
   setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark"));
 
@@ -39,6 +39,15 @@ qsa("#tool-tabs .tab").forEach((tab) =>
 
 const state = { category: "web", engines: new Set(), allEngines: {}, busy: false };
 
+/* API key: stored locally, sent as x-api-key header + api_key param.
+   The server accepts both; engines routes ignore it. */
+const apiKey = () => $("api-key").value.trim();
+$("api-key").addEventListener("input", () =>
+  localStorage.setItem("phrona-key", apiKey()));
+if (localStorage.getItem("phrona-key")) $("api-key").value = localStorage.getItem("phrona-key");
+
+const authHeaders = () => (apiKey() ? { "x-api-key": apiKey() } : {});
+
 const buildParams = () => {
   const p = new URLSearchParams({
     q: $("q").value.trim(),
@@ -46,15 +55,16 @@ const buildParams = () => {
     max_results: $("max-results").value || "20",
     page: $("page").value || "1",
   });
+  if (apiKey()) p.set("api_key", apiKey());
   if (state.engines.size) p.set("engines", [...state.engines].join(","));
   for (const id of ["region", "language", "filters"]) {
     const v = $(id).value.trim();
     if (v) p.set(id, v);
   }
-  for (const id of ["time-range", "safesearch"]) {
-    const v = $(id).value;
-    if (v) p.set(id, v);
-  }
+  const tr = $("time-range").value;
+  if (tr) p.set("time_range", tr);
+  const ss = $("safesearch").value;
+  if (ss) p.set("safesearch", ss);
   return p;
 };
 
@@ -77,9 +87,10 @@ const restoreLocation = () => {
   for (const id of ["region", "language", "filters", "max-results", "page"]) {
     if (p.get(id)) $(id).value = p.get(id);
   }
-  for (const id of ["time-range", "safesearch"]) {
-    if (p.get(id)) $(id).value = p.get(id);
-  }
+  const tr = p.get("time_range");
+  if (tr) $("time-range").value = tr;
+  const ss = p.get("safesearch");
+  if (ss) $("safesearch").value = ss;
   if (p.get("engines")) state.engines = new Set(p.get("engines").split(",").filter(Boolean));
   renderEngines();
 };
@@ -135,7 +146,8 @@ $("q").addEventListener("input", () => {
 
 async function fetchSuggestions() {
   try {
-    const r = await fetch(`/v1/suggest?q=${encodeURIComponent($("q").value.trim())}`);
+    const r = await fetch(`/v1/suggest?q=${encodeURIComponent($("q").value.trim())}`, { headers: authHeaders() });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const d = await r.json();
     const box = $("suggestions");
     box.textContent = "";
@@ -158,7 +170,7 @@ async function fetchSuggestions() {
         box.appendChild(chip);
       }
     }
-    box.hidden = n === 0;
+box.hidden = n === 0;
   } catch { /* ignore suggestion errors */ }
 }
 
@@ -196,7 +208,7 @@ async function doSearch() {
   saveLocation(params);
 
   try {
-    const r = await fetch(`/v1/search?${params}`);
+    const r = await fetch(`/v1/search?${params}`, { headers: authHeaders() });
     const d = await r.json();
     if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`);
     const ok = (d.engines || []).filter((e) => e.status === "ok" && e.results > 0);
@@ -363,7 +375,7 @@ qsa("form.tool-form").forEach((form) => {
     const useJson = qs(".json-check", form).checked;
     out.innerHTML = '<div class="spinner small"></div>';
     try {
-      const r = await fetch(`${tool.endpoint}?${tool.params(f)}`);
+      const r = await fetch(`${tool.endpoint}?${tool.params(f)}`, { headers: authHeaders() });
       const d = await r.json();
       if (!r.ok) throw new Error(d.error || `HTTP ${r.status}`);
       if (useJson) {

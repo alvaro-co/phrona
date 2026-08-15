@@ -1,9 +1,9 @@
 //! Page extraction for AI grounding: title, description, readable text,
 //! images, and query-biased excerpts.
 //!
-//! Run with: cargo run -p metasearch-examples --bin extract -- <url> [query]
+//! Run with: cargo run -p phrona-examples --bin extract -- <url> [query]
 
-use metasearch::{SearchClient, extract, extract_many};
+use phrona::{SearchClient, extract, extract_many};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

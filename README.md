@@ -1,17 +1,17 @@
-# MetaSearchRS
+# Phrona
 
-High-performance metasearch engine library written in Rust. Queries 25 search
+High-performance metasearch engine library written in Rust. Queries 26 search
 engines across 5 categories in parallel, impersonates real browsers over
 HTTP/2 (wreq), merges, deduplicates and ranks results locally, and exposes
 the same engine to Rust, Python, a REST API, an MCP server for AI agents and
 a web frontend.
 
 ```text
-crates/metasearch          core library (Rust)
-crates/metasearch-api      REST API server (axum)
-crates/metasearch-mcp      MCP server for AI agents (rmcp, stdio + TCP)
-crates/metasearch-cli      ms: single CLI to everything (search, server, MCP)
-crates/metasearch-python   Python bindings (pyo3)
+crates/phrona          core library
+crates/phrona-api      REST API server (axum)
+crates/phrona-mcp      MCP server for AI agents (rmcp, stdio + TCP)
+crates/phrona-cli      phrona: single CLI to everything (search, server, MCP)
+crates/phrona-python   Python bindings (pyo3)
 examples/                  runnable Rust and Python examples
 frontend/                  Material 3 style static web app
 scripts/                   upstream drift monitor
@@ -21,20 +21,20 @@ docs/                      full documentation
 ## Quick start (CLI)
 
 ```bash
-cargo run -p metasearch-cli -- search "rust programming" --max-results 10
-cargo run -p metasearch-cli -- suggest rus
-cargo run -p metasearch-cli -- serve         # REST 8080 + MCP-over-TCP 8081
+cargo run -p phrona-cli -- search "rust programming" --max-results 10
+cargo run -p phrona-cli -- suggest rus
+cargo run -p phrona-cli -- serve         # REST 8080 + MCP-over-TCP 8081
 ```
 
-`ms` is the all-in-one entry point: search, suggest, extract, grounding,
-engine listing, availability tests (`ms test`), the full REST server, MCP
-over stdio (`ms mcp`) or TCP (`ms serve`), and shell completions. See
+`phrona` is the all-in-one entry point: search, suggest, extract, grounding,
+engine listing, availability tests (`phrona test`), the full REST server, MCP
+over stdio (`phrona mcp`) or TCP (`phrona serve`), and shell completions. See
 [docs/cli.md](docs/cli.md).
 
 ## Quick start (Rust)
 
 ```rust
-use metasearch::{search_sync, SearchOptions};
+use phrona::{search_sync, SearchOptions};
 
 let resp = search_sync(SearchOptions::new("rust programming"))?;
 for r in resp.web() {
@@ -45,7 +45,7 @@ for r in resp.web() {
 Async:
 
 ```rust
-use metasearch::{SearchClient, SearchOptions};
+use phrona::{SearchClient, SearchOptions};
 
 let client = SearchClient::new()?;
 let resp = client.search(SearchOptions::new("rust programming")).await?;
@@ -54,21 +54,21 @@ let resp = client.search(SearchOptions::new("rust programming")).await?;
 ## Quick start (REST API)
 
 ```bash
-cargo run -p metasearch-api                 # listens on 127.0.0.1:8080
+cargo run -p phrona-api                 # listens on 127.0.0.1:8080
 curl "localhost:8080/v1/search?q=rust&max_results=5"
 ```
 
 ## Quick start (Python)
 
 ```bash
-uv build                                    # produces dist/metasearch-*.whl
-uv pip install dist/metasearch-*.whl --python <venv python3.12>
+uv build                                    # produces dist/phrona-*.whl
+uv pip install dist/phrona-*.whl --python <venv python3.12>
 ```
 
 ```python
-import metasearch
-metasearch.search("rust programming", engines=["bing", "brave"])
-metasearch.suggest("rus")
+import phrona
+phrona.search("rust programming", engines=["bing", "brave"])
+phrona.suggest("rus")
 ```
 
 Requires CPython <= 3.13 (pyo3 0.24 ABI).
@@ -76,20 +76,20 @@ Requires CPython <= 3.13 (pyo3 0.24 ABI).
 ## Quick start (MCP)
 
 ```bash
-cargo run -p metasearch-mcp                 # stdio JSON-RPC
-cargo run -p metasearch-cli -- mcp          # same, via ms
-cargo run -p metasearch-cli -- serve        # also serves MCP over TCP 8081
+cargo run -p phrona-mcp                 # stdio JSON-RPC
+cargo run -p phrona-cli -- mcp          # same, via phrona
+cargo run -p phrona-cli -- serve        # also serves MCP over TCP 8081
 ```
 
 Point your MCP client (Claude Desktop, claude-code, Cursor...) at the
-`metasearch-mcp` binary. Nine tools: `web_search`, `image_search`,
+`phrona-mcp` binary. Nine tools: `web_search`, `image_search`,
 `news_search`, `video_search`, `book_search`, `suggest`, `fetch_page`,
 `search_grounded`, `list_engines`.
 
 ## Quick start (web)
 
 ```bash
-cargo run -p metasearch-api          # or: ms serve
+cargo run -p phrona-api          # or: phrona serve
 # open http://localhost:8080         -> search page (full parameters + JSON view)
 #                                    -> Tools tab: suggest / extract / ground / engines / test
 ```
@@ -99,7 +99,7 @@ on reload - no rebuild.
 
 ## Features
 
-- 25 engines, 5 categories (web, images, news, videos, books), 1 suggestion
+- 26 engines, 5 categories (web, images, news, videos, books), 1 suggestion
   source family and page extraction (AI grounding).
 - Impersonated HTTP/2 with TLS fingerprint spoofing via wreq profiles
   (Chrome 100-149, Firefox 139-148, Safari 26, Edge 148, Opera 131, OkHttp).
@@ -117,8 +117,8 @@ on reload - no rebuild.
   category, safesearch, region, language, time range, filters, page,
   JSON view, per-engine report) and a Tools tab that runs every CLI
   capability in the browser (suggest, extract, ground, engines, test).
-- Fixture-based parser tests: 25 captured live pages (see
-  `crates/metasearch/tests/fixtures/`), network-independent.
+- Fixture-based parser tests: 26 captured live pages (see
+  `crates/phrona/tests/fixtures/`), network-independent.
 - Upstream drift monitor: `scripts/watch_upstream.sh` + the
   `upstream-watch` GitHub workflow report when any of the 8 upstream
   projects moves past its pinned commit, so broken parsers are caught
@@ -135,7 +135,7 @@ on reload - no rebuild.
 | [docs/api.md](docs/api.md) | REST API reference |
 | [docs/mcp.md](docs/mcp.md) | MCP server reference |
 | [docs/python.md](docs/python.md) | Python bindings reference |
-| [docs/cli.md](docs/cli.md) | CLI (`ms`) reference |
+| [docs/cli.md](docs/cli.md) | CLI (`phrona`) reference |
 | [docs/architecture.md](docs/architecture.md) | Architecture and layering |
 | [docs/examples.md](docs/examples.md) | Rust/Python examples |
 | [docs/frontend.md](docs/frontend.md) | Web frontend |
@@ -152,17 +152,16 @@ CI runs:
 ```bash
 cargo fmt --all --check           # or: make fmt-check
 cargo clippy --workspace --all-targets -- -D warnings   # or: make lint
-cargo test --workspace            # 64 offline fixture tests, ~1 s  (make test)
+cargo test --workspace            # 77 offline tests incl. 26 fixtures, ~1 s  (make test)
 make check                        # fmt-check + lint + test in one
 
 cargo build --workspace           # or: make build
-cargo build --release -p metasearch-cli -p metasearch-api -p metasearch-mcp  # make release
+cargo build --release -p phrona-cli -p phrona-api -p phrona-mcp  # make release
 uv build                          # Python wheel (make wheel)
 
-cargo run -p metasearch --bin fetch_fixtures [engine...]   # re-capture live fixtures
-cargo run -p metasearch --bin dbg_parse -- bing            # parse a fixture
-cargo run -p metasearch --bin probe_profiles               # probe impersonation profiles
-cargo run -p metasearch-examples --bin basic -- "rust"     # run the examples
+cargo run -p phrona --bin fetch_fixtures [engine...]   # re-capture live fixtures
+cargo run -p phrona --bin dbg_parse -- bing            # parse a fixture
+cargo run -p phrona-examples --bin basic -- "rust"     # run the examples
 ```
 
 Known limitation: Google, Qwant, Mojeek and the DDG HTML endpoint

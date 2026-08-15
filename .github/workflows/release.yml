@@ -49,16 +49,16 @@ jobs:
       - name: Build binaries
         env:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
-        run: cargo build --release -p metasearch-cli -p metasearch-api -p metasearch-mcp
+        run: cargo build --release -p phrona-cli -p phrona-api -p phrona-mcp
 
       - name: Package (unix)
         if: matrix.asset == 'tar.gz'
         shell: bash
         run: |
           mkdir -p dist
-          tar -czf "dist/metasearch-${{ matrix.target }}.tar.gz" \
-            -C target/release ms metasearch-api metasearch-mcp
-          sha256sum "dist/metasearch-${{ matrix.target }}.tar.gz" > "dist/metasearch-${{ matrix.target }}.tar.gz.sha256"
+          tar -czf "dist/phrona-${{ matrix.target }}.tar.gz" \
+            -C target/release phrona phrona-api phrona-mcp
+          sha256sum "dist/phrona-${{ matrix.target }}.tar.gz" > "dist/phrona-${{ matrix.target }}.tar.gz.sha256"
 
       - name: Package (windows)
         if: matrix.asset == 'zip'
@@ -66,10 +66,10 @@ jobs:
         run: |
           mkdir -p dist
           cd target/release
-          powershell Compress-Archive -Path ms.exe,metasearch-api.exe,metasearch-mcp.exe \
-            -DestinationPath "../../dist/metasearch-${{ matrix.target }}.zip"
+          powershell Compress-Archive -Path phrona.exe,phrona-api.exe,phrona-mcp.exe \
+            -DestinationPath "../../dist/phrona-${{ matrix.target }}.zip"
           cd ../..
-          sha256sum "dist/metasearch-${{ matrix.target }}.zip" > "dist/metasearch-${{ matrix.target }}.zip.sha256"
+          sha256sum "dist/phrona-${{ matrix.target }}.zip" > "dist/phrona-${{ matrix.target }}.zip.sha256"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -95,7 +95,7 @@ jobs:
           uv build
       - name: Rename for release
         run: |
-          mkdir -p dist && cp dist/*.whl dist/metasearch-wheel.whl 2>/dev/null || true
+          mkdir -p dist && cp dist/*.whl dist/phrona-wheel.whl 2>/dev/null || true
       - name: Upload wheel
         uses: actions/upload-artifact@v4
         with:
@@ -118,16 +118,55 @@ jobs:
           tag_name: ${{ github.ref_name }}
           name: ${{ github.ref_name }}
           body: |
-            ## MetaSearchRS ${{ github.ref_name }}
+            ## Phrona ${{ github.ref_name }}
 
             Build artifacts:
-            - `ms`, `metasearch-api`, `metasearch-mcp` binaries
+            - `phrona`, `phrona-api`, `phrona-mcp` binaries
               (linux x86_64 / aarch64, windows x86_64, macos aarch64)
-            - Python wheel (`metasearch-wheel.whl`)
+            - Python wheel (`phrona-wheel.whl`)
 
             See the README and docs/ for usage:
-            - CLI: `ms --help`
-            - Server: `ms serve` (REST on 8080, MCP-over-TCP on 8081)
-            - Web console: http://localhost:8080/console.html
+            - CLI: `phrona --help`
+            - Server: `phrona serve` (REST on 8080, MCP-over-TCP on 8081)
+            - Web console: http://localhost:8080/
           files: artifacts/*
           generate_release_notes: true
+
+  publish-crates:
+    name: publish crates.io
+    needs: [build]
+    if: ${{ secrets.CARGO_REGISTRY_TOKEN != '' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Rust toolchain
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+      - name: Publish phrona, then its dependents
+        run: |
+          cargo publish --allow-dirty --token "${{ secrets.CARGO_REGISTRY_TOKEN }}" -p phrona
+          cargo publish --allow-dirty --token "${{ secrets.CARGO_REGISTRY_TOKEN }}" -p phrona-api
+          cargo publish --allow-dirty --token "${{ secrets.CARGO_REGISTRY_TOKEN }}" -p phrona-mcp
+          cargo publish --allow-dirty --token "${{ secrets.CARGO_REGISTRY_TOKEN }}" -p phrona-cli
+
+  publish-pypi:
+    name: publish PyPI
+    needs: [wheel]
+    if: ${{ secrets.PYPI_TOKEN != '' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Rust toolchain
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+      - name: Build and publish wheel
+        run: |
+          pip install --upgrade uv
+          uv build
+          uv publish --token "${{ secrets.PYPI_TOKEN }}"
+

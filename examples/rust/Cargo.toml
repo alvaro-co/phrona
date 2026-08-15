@@ -1,9 +1,9 @@
 [package]
-name = "metasearch-examples"
+name = "phrona-examples"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Runnable examples for the metasearch library (cargo run -p metasearch-examples --bin <name>)"
+description = "Runnable examples for the phrona library (cargo run -p phrona-examples --bin <name>)"
 publish = false
 
 [[bin]]
@@ -23,6 +23,6 @@ name = "ground"
 path = "src/bin/ground.rs"
 
 [dependencies]
-metasearch = { workspace = true }
+phrona = { workspace = true }
 tokio = { workspace = true }
 anyhow = { workspace = true }

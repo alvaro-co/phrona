@@ -1,0 +1,16 @@
+include Cargo.toml
+include Cargo.lock
+include crates/phrona/Cargo.toml
+include crates/phrona-api/Cargo.toml
+include crates/phrona-mcp/Cargo.toml
+include crates/phrona-cli/Cargo.toml
+include crates/phrona-python/Cargo.toml
+include examples/rust/Cargo.toml
+recursive-include crates/phrona/src *.rs
+recursive-include crates/phrona-api/src *.rs
+recursive-include crates/phrona-mcp/src *.rs
+recursive-include crates/phrona-cli/src *.rs
+recursive-include crates/phrona-python/src *.rs
+recursive-include examples/rust/src *.rs
+recursive-include examples/python *.py
+include examples/python/README.md

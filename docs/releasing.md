@@ -27,10 +27,10 @@ triggers `.github/workflows/release.yml`.
 
 | Artifact | Contents |
 | --- | --- |
-| `metasearch-<target>.tar.gz` / `.zip` | release binaries `ms`, `metasearch-api`, `metasearch-mcp` (+ `.sha256`) |
-| `metasearch-wheel.whl` | Python wheel (linux x86_64) |
+| `phrona-<target>.tar.gz` / `.zip` | release binaries `phrona`, `phrona-api`, `phrona-mcp` (+ `.sha256`) |
+| `phrona-wheel.whl` | Python wheel (linux x86_64) |
 
-`ms` embeds everything: run `ms serve` for the full server (REST +
+`phrona` embeds everything: run `phrona serve` for the full server (REST +
 MCP-over-TCP + web page with Search and Tools tabs), or use the
 individual binaries.
 

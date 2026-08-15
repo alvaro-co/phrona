@@ -1,6 +1,6 @@
 # Rust library reference
 
-The core crate is `metasearch` (`crates/metasearch`). Everything public is
+The core crate is `phrona` (`crates/phrona`). Everything public is
 re-exported from the crate root.
 
 ## HTTP client
@@ -8,14 +8,11 @@ re-exported from the crate root.
 `HttpClient` wraps wreq with browser impersonation.
 
 ```rust
-use metasearch::{HttpClient, HttpClientBuilder, Profile};
+use phrona::{HttpClient, HttpClientBuilder, Profile};
 
 let client = HttpClient::builder()
     .profile(Profile::Chrome)      // or Chrome149, Firefox, Safari, Random, ...
     .timeout(std::time::Duration::from_secs(15))
-    .cookies(true)
-    .redirects(10)
-    .header("Accept-Language", "en-US,en;q=0.9")
     .proxy(Some("socks5://127.0.0.1:9050".into()))
     .build()?;
 
@@ -46,9 +43,6 @@ pub struct SearchOptions {
     pub language: Option<String>,    // e.g. "en"
     pub time_range: Option<TimeRange>, // Day | Week | Month | Year
     pub filters: Option<String>,     // engine-specific filter string
-    pub profile: Profile,
-    pub timeout: Duration,
-    pub proxies: Vec<String>,        // used as a pool, first is tried first
 }
 ```
 
@@ -58,9 +52,11 @@ pub struct SearchOptions {
 ## Search
 
 ```rust
-use metasearch::{SearchClient, SearchOptions, ResultItem};
+use phrona::{SearchClient, SearchOptions, ResultItem};
 
-let client = SearchClient::new()?;                  // Chrome profile
+let client = SearchClient::new()?;                  // Chrome profile, 10s timeout
+// or with an explicit profile, timeout and optional proxy:
+let client = SearchClient::with_options(Profile::Firefox, Some(Duration::from_secs(20)), None)?;
 let opts = SearchOptions {
     max_results: 30,
     engines: vec!["bing".into(), "brave".into(), "startpage".into()],
@@ -95,15 +91,17 @@ pub struct SearchResponse {
 - `Video`: title, url, description, duration, published, uploader, views, thumbnail_url
 - `Book`: title, author, publisher, info, url, thumbnail_url
 
-Convenience helpers: `metasearch::search(opts).await`, `metasearch::search_sync(opts)`.
+Convenience helpers: `phrona::search(opts).await`, `phrona::search_sync(opts)`.
 
-`EngineReport { name, status, results, error }` reports what each engine
-did ("ok", "empty" or "error"), so callers can degrade gracefully.
+`EngineReport { name, status, results, error, scope, kind }` reports what
+each engine did ("ok", "empty" or "error"), so callers can degrade
+gracefully; failed engines additionally carry `scope`/`kind` labels from
+the structured error system.
 
 ## Suggestions
 
 ```rust
-use metasearch::{SuggestSource, suggest, suggest_all};
+use phrona::{SuggestSource, suggest, suggest_all};
 
 let list = suggest(&client.http(), SuggestSource::Bing, "rust", "us-en").await?;
 let all  = suggest_all(&client.http(), "rust", "us-en").await; // all sources
@@ -114,7 +112,7 @@ Sources: DuckDuckGo, Google, Bing, Brave, Startpage, Qwant, Wikipedia.
 ## Page extraction (AI grounding)
 
 ```rust
-use metasearch::{extract, ExtractedPage};
+use phrona::{extract, ExtractedPage};
 
 let page: ExtractedPage = extract(&client.http(), "https://doc.rust-lang.org/book/", 8000, None).await?;
 // page.title, page.description, page.text, page.images
@@ -125,17 +123,26 @@ excerpt selection toward the relevant fragment.
 
 ## Engines
 
-`metasearch::engine` exposes:
+`phrona::engine` exposes:
 
 - `engine::list()` - all registered engines
 - `engine::engines_for(category)` - engines of a category
 - `engine::engine_by_name(name)` - lookup
-- `metasearch::available_engines(category)` - names for the REST API
+- `phrona::available_engines(category)` - names for the REST API
 
 ## Errors
 
-`metasearch::Error` covers HTTP, parse, engine and no-results failures; every
-variant implements `Display`. Engines never panic on malformed responses.
+`phrona::Error` is structured: a `scope`
+(`Egress` | `Provider` | `Schema` | `Query` | `Internal`) plus an
+observable `kind` (`RateLimited { retry_after }`, `Blocked(Cloudflare |
+Captcha | IpBan | BotDetection)`, `MalformedPayload`, `UpstreamUnavailable`,
+`Timeout`, `NetworkFailure`, `InvalidQuery`, `AllProvidersFailed`), with
+`engine`, `http_status` and an optional `message`. Constructors
+(`Error::rate_limited`, `Error::blocked`, `Error::schema`, ...) and typed
+`From<wreq::Error>`/`From<io::Error>` cover every path; every variant
+implements `Display`. Engines never panic on malformed responses.
+`search()` returns an `AllProvidersFailed` error only when every engine
+failed; otherwise results (possibly empty) are returned honestly.
 
 ## Merging, dedup, ranking
 

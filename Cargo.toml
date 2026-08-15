@@ -1,24 +1,24 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/metasearch",
-    "crates/metasearch-api",
-    "crates/metasearch-mcp",
-    "crates/metasearch-python",
-    "crates/metasearch-cli",
+    "crates/phrona",
+    "crates/phrona-api",
+    "crates/phrona-mcp",
+    "crates/phrona-python",
+    "crates/phrona-cli",
     "examples/rust",
 ]
-default-members = ["crates/metasearch"]
+default-members = ["crates/phrona"]
 
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
 license = "AGPL-3.0-only"
-repository = "https://github.com/metasearchrs/metasearch"
+repository = "https://github.com/phrona/phrona"
 rust-version = "1.85"
 
 [workspace.dependencies]
-metasearch = { path = "crates/metasearch" }
+phrona = { path = "crates/phrona", version = "0.1.0" }
 wreq = { version = "6.0.0-rc.29", features = ["cookies", "gzip", "brotli", "zstd", "deflate", "charset"] }
 wreq-util = { version = "3.0.0-rc.14", features = ["emulation"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync", "net"] }

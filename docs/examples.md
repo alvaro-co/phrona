@@ -11,7 +11,7 @@ examples/python/     scripts against the built wheel (see its README)
 
 ## Rust
 
-The `metasearch-examples` crate depends only on the core library
+The `phrona-examples` crate depends only on the core library
 (no API/MCP layers), demonstrating the minimal integration path.
 
 | Binary | Demonstrates |
@@ -22,10 +22,10 @@ The `metasearch-examples` crate depends only on the core library
 | `ground` | grounded RAG output: answer plus cited sources |
 
 ```bash
-cargo run -p metasearch-examples --bin basic -- "rust programming"
-cargo run -p metasearch-examples --bin suggest -- "rust"
-cargo run -p metasearch-examples --bin extract
-cargo run -p metasearch-examples --bin ground -- "rust ownership"
+cargo run -p phrona-examples --bin basic -- "rust programming"
+cargo run -p phrona-examples --bin suggest -- "rust"
+cargo run -p phrona-examples --bin extract
+cargo run -p phrona-examples --bin ground -- "rust ownership"
 ```
 
 ## Python
@@ -33,7 +33,7 @@ cargo run -p metasearch-examples --bin ground -- "rust ownership"
 ```bash
 uv build
 uv venv --python 3.12 /tmp/msenv
-uv pip install --python /tmp/msenv/bin/python dist/metasearch-0.1.0-*.whl
+uv pip install --python /tmp/msenv/bin/python dist/phrona-0.1.0-*.whl
 /tmp/msenv/bin/python examples/python/basic.py "rust programming"
 /tmp/msenv/bin/python examples/python/client.py "rust ownership"
 ```
@@ -46,13 +46,13 @@ Full details in `examples/python/README.md`.
 
 The same library powers every surface; the crates compose in one process:
 
-- `metasearch` - core (Rust or via `metasearch` Python package)
-- `metasearch-api` - REST API, also embedded in `ms serve`
-- `metasearch-mcp` - MCP stdio server, also embedded in `ms serve`
-  and `ms mcp`
-- `metasearch-cli` (`ms`) - all of the above plus search/suggest/extract/
+- `phrona` - core (Rust or via `phrona` Python package)
+- `phrona-api` - REST API, also embedded in `phrona serve`
+- `phrona-mcp` - MCP stdio server, also embedded in `phrona serve`
+  and `phrona mcp`
+- `phrona-cli` (`phrona`) - all of the above plus search/suggest/extract/
   ground/test commands
 
-Example: run `ms serve`, then query it from Rust (`SearchClient`),
-Python (`metasearch`), HTTP (`curl`), or an MCP client pointed at
+Example: run `phrona serve`, then query it from Rust (`SearchClient`),
+Python (`phrona`), HTTP (`curl`), or an MCP client pointed at
 `tcp://127.0.0.1:8081` - one process, four interfaces.

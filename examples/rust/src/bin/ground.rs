@@ -1,8 +1,8 @@
 //! Grounded search for RAG: search, then answer with cited sources.
 //!
-//! Run with: cargo run -p metasearch-examples --bin ground -- "rust ownership"
+//! Run with: cargo run -p phrona-examples --bin ground -- "rust ownership"
 
-use metasearch::{ResultItem, SearchClient, SearchOptions};
+use phrona::{ResultItem, SearchClient, SearchOptions};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
