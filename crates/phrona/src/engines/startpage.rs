@@ -73,7 +73,7 @@ impl Engine for Startpage {
 }
 
 pub async fn fetch_sc(ctx: &EngineContext<'_>) -> Result<String> {
-    if let Some(sc) = ctx.shared.sc_get().await {
+    if let Some(sc) = ctx.shared.sc_get() {
         return Ok(sc);
     }
     let resp = ctx.client.get("https://www.startpage.com/").await?;
@@ -85,7 +85,7 @@ pub async fn fetch_sc(ctx: &EngineContext<'_>) -> Result<String> {
             .or_else(|| parse::doc_attr(&doc, "input[name=\"sc\"]", "value"))
             .ok_or_else(|| Error::blocked("startpage", BlockDetails::BotDetection))?
     };
-    ctx.shared.sc_set(sc.clone()).await;
+    ctx.shared.sc_set(sc.clone());
     Ok(sc)
 }
 

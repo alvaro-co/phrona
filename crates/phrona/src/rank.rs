@@ -1,56 +1,94 @@
 use crate::dedup::GroupedResult;
 
-/// Relevance scoring: engines rank results per-position; we blend
-/// cross-engine frequency, per-engine position, and content matching.
-pub fn rank(groups: Vec<GroupedResult>, query: &str) -> Vec<(f64, GroupedResult)> {
-    let terms: Vec<String> = query
+/// Split a query into the non-trivial alphanumeric terms used for matching.
+pub fn query_terms(query: &str) -> Vec<String> {
+    query
         .to_lowercase()
         .split_whitespace()
         .filter(|t| t.chars().count() > 2)
         .map(|t| t.trim_matches(|c: char| !c.is_alphanumeric()).to_string())
         .filter(|t| !t.is_empty())
-        .collect();
+        .collect()
+}
 
+/// Raw (un-normalized) relevance score, shared by [`rank`] (ordering) and
+/// [`calculate_score`] (display).
+///
+/// Components:
+/// 1. engine consensus: +1.5 per agreeing engine,
+/// 2. position: `(10 / position).min(3)`,
+/// 3. domain authority: +2.5 for Wikipedia / Grokipedia,
+/// 4. BM25-style term-frequency saturation on title (2x weight) and body.
+fn raw_score(g: &GroupedResult, terms: &[String]) -> f64 {
+    let mut score = 0.0;
+    // 1. cross-engine agreement: +1.5 per agreeing engine
+    score += g.count as f64 * 1.5;
+    // 2. engine position: earlier is better
+    let pos = g.result.position.max(1) as f64;
+    score += (10.0 / pos).min(3.0);
+    // 3. wikipedia preference (answer-like, high precision)
+    let host = crate::parse::host_of(&g.result.url).unwrap_or_default();
+    if host.contains("wikipedia.org") || host.contains("grokipedia") {
+        score += 2.5;
+    }
+    // 4. BM25-style term match on title and description
+    score += bm25_match(&g.result.title, &g.result.description, terms);
+    score
+}
+
+/// Relevance scoring: engines rank results per-position; we blend
+/// cross-engine frequency, per-engine position, and content matching.
+pub fn rank(groups: Vec<GroupedResult>, query: &str) -> Vec<(f64, GroupedResult)> {
+    let terms = query_terms(query);
     let mut scored: Vec<(f64, GroupedResult)> = groups
         .into_iter()
-        .map(|g| {
-            let mut score = 0.0;
-            // cross-engine agreement
-            score += (g.count - 1) as f64 * 1.5;
-            // engine position: earlier is better
-            let pos = g.result.position.max(1) as f64;
-            score += (10.0 / pos).min(3.0);
-            // wikipedia preference (answer-like, high precision)
-            let host = crate::parse::host_of(&g.result.url).unwrap_or_default();
-            if host.contains("wikipedia.org") || host.contains("grokipedia") {
-                score += 3.0;
-            }
-            score += text_match(&g.result.title, &g.result.description, &terms);
-            (score, g)
-        })
+        .map(|g| (raw_score(&g, &terms), g))
         .collect();
 
     scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
     scored
 }
 
-fn text_match(title: &str, body: &str, terms: &[String]) -> f64 {
+/// Unified cross-category score for a grouped result, normalized to a float
+/// bounded strictly between 0.001 and 1.000 (rounded to 3 decimal places).
+/// Higher is better; the value is monotonic in [`raw_score`].
+pub fn calculate_score(grouped: &GroupedResult, query_terms: &[String]) -> f64 {
+    let raw = raw_score(grouped, query_terms);
+    let norm = raw / (1.0 + raw);
+    let rounded = (norm * 1000.0).round() / 1000.0;
+    rounded.clamp(0.001, 0.999)
+}
+
+/// BM25-style term match: saturating term-frequency weighting
+/// (`tf / (tf + k1)` with k1 = 1.2), no length normalization (no corpus),
+/// with title hits weighted 2x over description hits.
+fn bm25_match(title: &str, body: &str, terms: &[String]) -> f64 {
     if terms.is_empty() {
         return 0.0;
     }
-    let title = title.to_lowercase();
-    let body = body.to_lowercase();
-    let title_hits = terms.iter().filter(|t| title.contains(t.as_str())).count();
-    let body_hits = terms.iter().filter(|t| body.contains(t.as_str())).count();
-    let all = terms.len() as f64;
-    let t = title_hits as f64 / all;
-    let b = body_hits as f64 / all;
-    match (title_hits, body_hits) {
-        (0, 0) => 0.0,
-        (x, y) if x > 0 && y > 0 => 1.0 + t * 2.0 + b,
-        (x, _) if x > 0 => 0.8 + t * 1.5,
-        (_, _) => 0.4 + b,
+    const K1: f64 = 1.2;
+    let title_words = tokenize(title);
+    let body_words = tokenize(body);
+    let mut score = 0.0;
+    for t in terms {
+        let tf_t = title_words.iter().filter(|w| *w == t).count() as f64;
+        if tf_t > 0.0 {
+            score += 2.0 * (K1 * tf_t) / (tf_t + K1);
+        }
+        let tf_b = body_words.iter().filter(|w| *w == t).count() as f64;
+        if tf_b > 0.0 {
+            score += (K1 * tf_b) / (tf_b + K1);
+        }
     }
+    score
+}
+
+fn tokenize(s: &str) -> Vec<String> {
+    s.to_lowercase()
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .map(|w| w.to_string())
+        .collect()
 }
 
 #[cfg(test)]
@@ -147,5 +185,56 @@ mod tests {
         let total: f64 = ranked.iter().map(|(s, _)| s).sum();
         ranked.sort_by(|x, y| x.0.partial_cmp(&y.0).unwrap());
         assert!((total - ranked.iter().map(|(s, _)| s).sum::<f64>()).abs() < 1e-9);
+    }
+
+    #[test]
+    fn calculate_score_normalizes_to_unit_interval() {
+        let g = group("rust book", "https://a.com", "rust programming", "bing", 1);
+        for count in [1usize, 2, 3, 5] {
+            let s = calculate_score(&rerank(&g, count, vec!["bing"]), &query_terms("rust book"));
+            assert!((0.001..=0.999).contains(&s), "count={count}: {s}");
+            let rounded = (s * 1000.0).fract().abs();
+            assert!(rounded < 1e-9, "count={count}: not 3 decimals: {s}");
+        }
+        // every result scores; nothing can reach the exclusive 1.000 bound
+        let top = calculate_score(
+            &rerank(
+                &group(
+                    "rust book",
+                    "https://en.wikipedia.org/wiki/Rust",
+                    "rust programming book",
+                    "wikipedia",
+                    1,
+                ),
+                5,
+                vec!["bing", "brave", "ddg", "google", "mojeek"],
+            ),
+            &query_terms("rust book rust book rust book"),
+        );
+        assert!((0.001..1.000).contains(&top), "top={top}");
+    }
+
+    #[test]
+    fn calculate_score_is_monotonic_in_components() {
+        let terms = query_terms("rust book");
+        let base = group("rust book", "https://a.com", "rust programming", "bing", 1);
+        // consensus: more agreeing engines -> higher
+        let agreed = rerank(&base, 3, vec!["bing", "brave", "ddg"]);
+        assert!(calculate_score(&agreed, &terms) > calculate_score(&base, &terms));
+        // position: earlier -> higher
+        let late = group("rust book", "https://a.com", "rust programming", "bing", 8);
+        assert!(calculate_score(&base, &terms) > calculate_score(&late, &terms));
+        // domain authority: wikipedia gets the boost
+        let wiki = group(
+            "rust book",
+            "https://en.wikipedia.org/wiki/Rust",
+            "rust",
+            "wikipedia",
+            1,
+        );
+        assert!(calculate_score(&wiki, &terms) > calculate_score(&base, &terms));
+        // BM25: title match beats none
+        let none = group("totally unrelated", "https://a.com", "x", "bing", 1);
+        assert!(calculate_score(&base, &terms) > calculate_score(&none, &terms));
     }
 }

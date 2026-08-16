@@ -215,7 +215,7 @@ pub fn bing_time_minutes(t: &TimeRange) -> &'static str {
 /// Fetch the DuckDuckGo vqd token for a query, cached per query.
 pub async fn ddg_vqd(ctx: &EngineContext<'_>, query: &str) -> Result<String> {
     let key = query.to_string();
-    if let Some(v) = ctx.shared.vqd_get(&key).await {
+    if let Some(v) = ctx.shared.vqd_get(&key) {
         return Ok(v);
     }
     let url = parse::with_query("https://duckduckgo.com/", [("q", query)]);
@@ -227,7 +227,7 @@ pub async fn ddg_vqd(ctx: &EngineContext<'_>, query: &str) -> Result<String> {
     let text = String::from_utf8_lossy(&body);
     let vqd = extract_vqd(&text)
         .ok_or_else(|| Error::blocked("duckduckgo", BlockDetails::BotDetection))?;
-    ctx.shared.vqd_set(&key, vqd.clone()).await;
+    ctx.shared.vqd_set(&key, vqd.clone());
     Ok(vqd)
 }
 

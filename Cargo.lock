@@ -1427,6 +1427,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "futures",
+ "parking_lot",
  "percent-encoding",
  "rand",
  "regex",

@@ -1,4 +1,6 @@
 use std::net::IpAddr;
+use std::sync::OnceLock;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use wreq::Uri;
@@ -123,6 +125,103 @@ impl Profile {
     }
 }
 
+/// Browser User-Agent strings matching the TLS/HTTP2 impersonation profiles
+/// of [`Profile`]. Variants of a family (versioned profiles) use the family
+/// UA; [`Profile::Random`] picks one at first use and caches it.
+const UA_CHROME: &str = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36";
+const UA_FIREFOX: &str =
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:148.0) Gecko/20100101 Firefox/148.0";
+const UA_SAFARI: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.4 Safari/605.1.15";
+const UA_EDGE: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36 Edg/148.0.0.0";
+const UA_OPERA: &str = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36 OPR/134.0.0.0";
+const UA_OKHTTP: &str = "okhttp/5.0.0-alpha.14";
+const UA_POOL: [&str; 5] = [UA_CHROME, UA_FIREFOX, UA_SAFARI, UA_EDGE, UA_OPERA];
+
+/// UA for a browser profile, matching the exact TLS impersonation family.
+pub fn default_user_agent(profile: Profile) -> &'static str {
+    match profile {
+        Profile::Firefox | Profile::Firefox139 | Profile::Firefox148 => UA_FIREFOX,
+        Profile::Safari | Profile::Safari26 => UA_SAFARI,
+        Profile::Edge | Profile::Edge148 => UA_EDGE,
+        Profile::Opera | Profile::Opera131 => UA_OPERA,
+        Profile::OkHttp => UA_OKHTTP,
+        // Random emulation: fall back to one of the known browser families.
+        Profile::Random => RANDOM_UA.get_or_init(|| {
+            use rand::Rng;
+            let i = rand::rng().random_range(0..UA_POOL.len());
+            UA_POOL[i]
+        }),
+        // Chrome and all versioned Chrome variants.
+        Profile::Chrome
+        | Profile::Chrome100
+        | Profile::Chrome120
+        | Profile::Chrome131
+        | Profile::Chrome140
+        | Profile::Chrome149 => UA_CHROME,
+    }
+}
+
+static RANDOM_UA: OnceLock<&'static str> = OnceLock::new();
+
+/// A sticky pool of persistent impersonated HTTP clients: one per proxy URL
+/// (each with its own connection pool and cookie jar), or a single direct
+/// client when no proxies are configured. [`ProxyPool::get_client`] assigns
+/// clients round-robin; an engine task keeps its client for its whole
+/// lifetime so multi-step flows (vqd -> i.js, sc -> search) stay pinned to
+/// the same proxy and cookies.
+pub struct ProxyPool {
+    clients: Vec<HttpClient>,
+    counter: AtomicUsize,
+}
+
+impl ProxyPool {
+    /// Build one persistent client per proxy URL. An empty `proxies` list
+    /// yields a single direct client.
+    pub fn new(proxies: Vec<String>, profile: Profile, timeout: Duration) -> Result<Self> {
+        let mut clients = Vec::with_capacity(proxies.len().max(1));
+        for proxy in proxies {
+            clients.push(
+                HttpClient::builder()
+                    .profile(profile)
+                    .timeout(timeout)
+                    .proxy(Some(proxy))
+                    .build()?,
+            );
+        }
+        if clients.is_empty() {
+            clients.push(
+                HttpClient::builder()
+                    .profile(profile)
+                    .timeout(timeout)
+                    .build()?,
+            );
+        }
+        Ok(Self {
+            clients,
+            counter: AtomicUsize::new(0),
+        })
+    }
+
+    pub fn len(&self) -> usize {
+        self.clients.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.clients.is_empty()
+    }
+
+    /// Deterministic round-robin client selection.
+    pub fn get_client(&self) -> &HttpClient {
+        let idx = self.counter.fetch_add(1, Ordering::Relaxed) % self.clients.len();
+        &self.clients[idx]
+    }
+
+    /// The first (or only) client — for non-engine flows such as `extract`.
+    pub fn first(&self) -> &HttpClient {
+        &self.clients[0]
+    }
+}
+
 pub struct HttpClient {
     client: wreq::Client,
 }
@@ -201,15 +300,14 @@ pub struct HttpClientBuilder {
 
 impl Default for HttpClientBuilder {
     fn default() -> Self {
+        let profile = Profile::Chrome;
         let mut headers = HeaderMap::new();
         headers.insert(
             USER_AGENT,
-            HeaderValue::from_static(
-                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36",
-            ),
+            HeaderValue::from_static(default_user_agent(profile)),
         );
         Self {
-            profile: Profile::Chrome,
+            profile,
             timeout: Duration::from_secs(10),
             cookies: true,
             redirects: 10,
@@ -222,6 +320,11 @@ impl Default for HttpClientBuilder {
 impl HttpClientBuilder {
     pub fn profile(mut self, profile: Profile) -> Self {
         self.profile = profile;
+        // keep the UA in lockstep with the TLS/HTTP2 impersonation profile
+        self.headers.insert(
+            USER_AGENT,
+            HeaderValue::from_static(default_user_agent(profile)),
+        );
         self
     }
 
@@ -255,5 +358,65 @@ impl HttpClientBuilder {
             .build()
             .map_err(|_| Error::internal("client", "client build failed"))?;
         Ok(HttpClient { client })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn proxy_pool_round_robin_is_deterministic() {
+        let pool = ProxyPool::new(
+            vec![
+                "http://127.0.0.1:1".into(),
+                "http://127.0.0.1:2".into(),
+                "http://127.0.0.1:3".into(),
+            ],
+            Profile::Chrome,
+            Duration::from_secs(5),
+        )
+        .unwrap();
+        assert_eq!(pool.len(), 3);
+        let a = pool.get_client() as *const HttpClient;
+        let b = pool.get_client() as *const HttpClient;
+        let c = pool.get_client() as *const HttpClient;
+        let a2 = pool.get_client() as *const HttpClient;
+        let b2 = pool.get_client() as *const HttpClient;
+        // strict rotation: a b c a b ...
+        assert!(!std::ptr::eq(a, b));
+        assert!(!std::ptr::eq(b, c));
+        assert!(!std::ptr::eq(a, c));
+        assert!(std::ptr::eq(a, a2));
+        assert!(std::ptr::eq(b, b2));
+    }
+
+    #[test]
+    fn proxy_pool_empty_yields_single_direct_client() {
+        let pool = ProxyPool::new(vec![], Profile::Firefox, Duration::from_secs(5)).unwrap();
+        assert_eq!(pool.len(), 1);
+        assert!(std::ptr::eq(
+            pool.get_client() as *const HttpClient,
+            pool.get_client() as *const HttpClient,
+        ));
+        assert!(std::ptr::eq(pool.first(), pool.get_client()));
+    }
+
+    #[test]
+    fn default_user_agent_matches_family() {
+        assert!(default_user_agent(Profile::Firefox).contains("Firefox/"));
+        assert!(default_user_agent(Profile::Firefox139).contains("Firefox/"));
+        assert!(default_user_agent(Profile::Firefox148).contains("Firefox/"));
+        assert!(default_user_agent(Profile::Safari).contains("Safari/"));
+        assert!(default_user_agent(Profile::Safari26).contains("Version/"));
+        assert!(default_user_agent(Profile::Chrome).contains("Chrome/"));
+        assert!(default_user_agent(Profile::Chrome100).contains("Chrome/"));
+        assert!(default_user_agent(Profile::Edge).contains("Edg/"));
+        assert!(default_user_agent(Profile::Opera).contains("OPR/"));
+        assert!(default_user_agent(Profile::OkHttp).starts_with("okhttp/"));
+        let r1 = default_user_agent(Profile::Random);
+        let r2 = default_user_agent(Profile::Random);
+        assert_eq!(r1, r2, "random UA is cached");
+        assert!(UA_POOL.contains(&r1));
     }
 }

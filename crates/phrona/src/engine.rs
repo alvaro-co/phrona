@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
-use tokio::sync::Mutex;
+use parking_lot::RwLock;
 
 use crate::client::HttpClient;
 use crate::error::Result;
@@ -19,8 +19,10 @@ pub struct EngineContext<'a> {
 
 #[derive(Default)]
 pub struct EngineShared {
-    pub vqd: Mutex<HashMap<String, (Instant, String)>>,
-    pub sc: Mutex<Option<(Instant, String)>>,
+    /// `parking_lot::RwLock`: synchronous reads/writes, never blocks the
+    /// async runtime (no `.await` involved).
+    pub vqd: RwLock<HashMap<String, (Instant, String)>>,
+    pub sc: RwLock<Option<(Instant, String)>>,
 }
 
 impl EngineShared {
@@ -32,29 +34,28 @@ impl EngineShared {
 const CACHE_TTL: Duration = Duration::from_secs(3600);
 
 impl EngineShared {
-    pub async fn vqd_get(&self, key: &str) -> Option<String> {
-        let m = self.vqd.lock().await;
+    pub fn vqd_get(&self, key: &str) -> Option<String> {
+        let m = self.vqd.read();
         m.get(key)
             .filter(|(at, _)| at.elapsed() < CACHE_TTL)
             .map(|(_, v)| v.clone())
     }
 
-    pub async fn vqd_set(&self, key: &str, value: String) {
+    pub fn vqd_set(&self, key: &str, value: String) {
         self.vqd
-            .lock()
-            .await
+            .write()
             .insert(key.to_string(), (Instant::now(), value));
     }
 
-    pub async fn sc_get(&self) -> Option<String> {
-        let m = self.sc.lock().await;
+    pub fn sc_get(&self) -> Option<String> {
+        let m = self.sc.read();
         m.as_ref()
             .filter(|(at, _)| at.elapsed() < CACHE_TTL)
             .map(|(_, v)| v.clone())
     }
 
-    pub async fn sc_set(&self, value: String) {
-        *self.sc.lock().await = Some((Instant::now(), value));
+    pub fn sc_set(&self, value: String) {
+        *self.sc.write() = Some((Instant::now(), value));
     }
 }
 
