@@ -438,7 +438,6 @@ mod tests {
         assert_eq!(rest.len(), 2);
         let groups = crate::dedup::group(rest);
         assert_eq!(groups.len(), 2);
-        // dedup strips tracking params
         assert_eq!(
             crate::dedup::dedup_key(&items[1].url),
             "https://example.com/a"
