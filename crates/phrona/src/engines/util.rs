@@ -151,6 +151,7 @@ pub async fn read_body(resp: wreq::Response, engine: &'static str) -> Result<Vec
 /// capture time by actually parsing the body (content validation) and records
 /// it in `tests/fixtures/meta.json`; fixture tests consult that record instead
 /// of sniffing for marker strings.
+#[cfg(test)]
 pub fn fixture_parses(name: &str) -> bool {
     let meta = include_str!("../../tests/fixtures/meta.json");
     match serde_json::from_str::<serde_json::Value>(meta) {
