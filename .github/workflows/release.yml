@@ -120,8 +120,10 @@ jobs:
           # manylinux containers; musllinux wheels are skipped.
           CIBW_SKIP: "*-musllinux*"
           CIBW_TEST_SKIP: "*"
-          CIBW_BEFORE_ALL_LINUX: "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal"
-          CIBW_ENVIRONMENT_LINUX: 'PATH=/root/.cargo/bin:$PATH'
+          # btls-sys runs bindgen at build time; the manylinux images carry no
+          # libclang, so install the pip-bundled one and point bindgen at it.
+          CIBW_BEFORE_ALL_LINUX: "/opt/python/cp39-cp39/bin/pip install --target /opt/libclang libclang && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal"
+          CIBW_ENVIRONMENT_LINUX: 'PATH=/root/.cargo/bin:$PATH LIBCLANG_PATH=/opt/libclang/clang/native'
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
