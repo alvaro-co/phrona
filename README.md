@@ -71,7 +71,7 @@ phrona.search("rust programming", engines=["bing", "brave"])
 phrona.suggest("rus")
 ```
 
-Requires CPython <= 3.13 (pyo3 0.24 ABI).
+Requires CPython <= 3.13 (pyo3 0.29).
 
 ## Quick start (MCP)
 

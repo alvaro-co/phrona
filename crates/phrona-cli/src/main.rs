@@ -39,6 +39,7 @@ async fn main() -> Result<()> {
         profile,
         Some(timeout),
         (!proxies.is_empty()).then_some(proxies),
+        phrona::TargetPolicy::default(),
     )?;
 
     match &cli.command {

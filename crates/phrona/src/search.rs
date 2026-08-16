@@ -4,7 +4,7 @@ use std::time::Instant;
 use futures::stream::{FuturesUnordered, StreamExt};
 use tokio::sync::Semaphore;
 
-use crate::client::{HttpClient, Profile, ProxyPool};
+use crate::client::{HttpClient, Profile, ProxyPool, TargetPolicy};
 use crate::config::PhronaConfig;
 use crate::dedup::{GroupedResult, group};
 use crate::engine::{EngineContext, EngineShared, resolve};
@@ -64,16 +64,17 @@ pub struct SearchClient {
 impl SearchClient {
     /// Build a client with default settings.
     pub fn new() -> Result<Self> {
-        Self::with_options(Profile::Chrome, None, None)
+        Self::with_options(Profile::Chrome, None, None, TargetPolicy::default())
     }
 
     pub fn with_options(
         profile: Profile,
         timeout: Option<std::time::Duration>,
         proxies: Option<Vec<String>>,
+        policy: TargetPolicy,
     ) -> Result<Self> {
         let timeout = timeout.unwrap_or_else(|| std::time::Duration::from_secs(10));
-        let pool = ProxyPool::new(proxies.unwrap_or_default(), profile, timeout)?;
+        let pool = ProxyPool::new(proxies.unwrap_or_default(), profile, timeout, policy)?;
         Ok(Self {
             pool,
             shared: Arc::new(EngineShared::new()),
@@ -83,12 +84,13 @@ impl SearchClient {
     }
 
     /// Build a client from a [`PhronaConfig`]: impersonation profile,
-    /// timeout, proxy pool and per-search concurrency limit.
+    /// timeout, proxy pool, domain policy and per-search concurrency limit.
     pub fn with_config(cfg: &PhronaConfig) -> Result<Self> {
         let mut client = Self::with_options(
             cfg.profile(),
             Some(cfg.timeout()),
             Some(cfg.engines.proxies.clone()),
+            TargetPolicy::from_security(&cfg.security),
         )?;
         client.concurrency = cfg.concurrency_limit().max(1);
         Ok(client)

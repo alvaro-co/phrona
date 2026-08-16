@@ -1,5 +1,4 @@
 use std::net::IpAddr;
-use std::sync::OnceLock;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
@@ -8,8 +7,42 @@ use wreq::header::{HeaderMap, HeaderValue, USER_AGENT};
 use wreq::redirect;
 use wreq_util::Emulation;
 
+use crate::config::SecurityConfig;
 use crate::error::{Error, Result};
 use crate::extract::is_safe_ip;
+
+/// Operator-defined domain allow/deny list applied to every outbound target
+/// (extract URLs and each redirect hop). `denied` wins over `allowed`; an
+/// empty `allowed` list permits any host. Matching is case-insensitive and
+/// covers subdomains (e.g. `example.com` matches `www.example.com`).
+#[derive(Clone, Debug, Default)]
+pub struct TargetPolicy {
+    pub allowed: Vec<String>,
+    pub denied: Vec<String>,
+}
+
+impl TargetPolicy {
+    /// Build from the operator's `security` configuration section. These
+    /// lists were previously dead config; they are now enforced.
+    pub fn from_security(sec: &SecurityConfig) -> Self {
+        Self {
+            allowed: sec.allowed_domains.clone(),
+            denied: sec.denied_domains.clone(),
+        }
+    }
+
+    /// Whether an outbound target host passes the allow/deny policy.
+    pub fn domain_allowed(&self, host: &str) -> bool {
+        let h = host.trim().to_ascii_lowercase();
+        let matches = |list: &[String]| {
+            list.iter().any(|d| {
+                let d = d.trim().to_ascii_lowercase();
+                h == d || h.ends_with(&format!(".{d}"))
+            })
+        };
+        !matches(&self.denied) && (self.allowed.is_empty() || matches(&self.allowed))
+    }
+}
 
 /// Parse an IP literal from a URL/Uri host string, tolerating the brackets
 /// that authority serialization adds around IPv6 addresses (`[::1]`).
@@ -27,8 +60,9 @@ fn parse_host_ip(host: &str) -> Option<IpAddr> {
 
 /// Validate a target URL for SSRF safety: only `http`/`https` schemes, and
 /// every address the hostname resolves to must pass [`is_safe_ip`]. Used for
-/// the initial request (in `extract`) and for every redirect hop.
-pub(crate) async fn validate_target(uri: &Uri) -> Result<()> {
+/// the initial request (in `extract`) and for every redirect hop. The
+/// operator's domain allow/deny policy is enforced first.
+pub(crate) async fn validate_target(uri: &Uri, policy: &TargetPolicy) -> Result<()> {
     let scheme = uri.scheme_str().unwrap_or("");
     if scheme != "http" && scheme != "https" {
         return Err(Error::invalid_query(
@@ -39,6 +73,12 @@ pub(crate) async fn validate_target(uri: &Uri) -> Result<()> {
     let host = uri
         .host()
         .ok_or_else(|| Error::invalid_query("client", "URL has no host"))?;
+    if !policy.domain_allowed(host) {
+        return Err(Error::invalid_query(
+            "client",
+            "target host is blocked by the domain allow/deny policy",
+        ));
+    }
     let port = uri
         .port_u16()
         .unwrap_or(if scheme == "https" { 443 } else { 80 });
@@ -61,15 +101,17 @@ pub(crate) async fn validate_target(uri: &Uri) -> Result<()> {
 }
 
 /// Redirect policy that intercepts every hop: enforces the redirect limit
-/// and validates scheme + destination IP before following. A non-`http(s)`
-/// or private/restricted hop fails the request instead of being followed.
-fn ssrf_redirect_policy(max_redirects: usize) -> redirect::Policy {
+/// and validates scheme + destination IP + domain policy before following.
+/// A non-`http(s)`, policy-blocked or private/restricted hop fails the
+/// request instead of being followed.
+fn ssrf_redirect_policy(max_redirects: usize, policy: TargetPolicy) -> redirect::Policy {
     redirect::Policy::custom(move |attempt| {
+        let policy = policy.clone();
         attempt.pending(move |attempt| async move {
             if attempt.previous.len() > max_redirects {
                 return attempt.error(Error::internal("client", "too many redirects"));
             }
-            match validate_target(&attempt.uri).await {
+            match validate_target(&attempt.uri, &policy).await {
                 Ok(()) => attempt.follow(),
                 Err(e) => attempt.error(e),
             }
@@ -148,7 +190,8 @@ impl Profile {
 
 /// Browser User-Agent strings matching the TLS/HTTP2 impersonation profiles
 /// of [`Profile`]. Variants of a family (versioned profiles) use the family
-/// UA; [`Profile::Random`] picks one at first use and caches it.
+/// UA; [`Profile::Random`] picks a fresh random family UA on every call so
+/// each client instance rotates instead of sharing one process-global UA.
 const UA_CHROME: &str = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36";
 const UA_FIREFOX: &str =
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:148.0) Gecko/20100101 Firefox/148.0";
@@ -166,12 +209,12 @@ pub fn default_user_agent(profile: Profile) -> &'static str {
         Profile::Edge | Profile::Edge148 => UA_EDGE,
         Profile::Opera | Profile::Opera131 => UA_OPERA,
         Profile::OkHttp => UA_OKHTTP,
-        // Random emulation: fall back to one of the known browser families.
-        Profile::Random => RANDOM_UA.get_or_init(|| {
+        // Random emulation: rotate through the known browser families so
+        // clients do not share one cached UA for the process lifetime.
+        Profile::Random => {
             use rand::Rng;
-            let i = rand::rng().random_range(0..UA_POOL.len());
-            UA_POOL[i]
-        }),
+            UA_POOL[rand::rng().random_range(0..UA_POOL.len())]
+        }
         // Chrome and all versioned Chrome variants.
         Profile::Chrome
         | Profile::Chrome100
@@ -181,8 +224,6 @@ pub fn default_user_agent(profile: Profile) -> &'static str {
         | Profile::Chrome149 => UA_CHROME,
     }
 }
-
-static RANDOM_UA: OnceLock<&'static str> = OnceLock::new();
 
 /// A sticky pool of persistent impersonated HTTP clients: one per proxy URL
 /// (each with its own connection pool and cookie jar), or a single direct
@@ -197,8 +238,14 @@ pub struct ProxyPool {
 
 impl ProxyPool {
     /// Build one persistent client per proxy URL. An empty `proxies` list
-    /// yields a single direct client.
-    pub fn new(proxies: Vec<String>, profile: Profile, timeout: Duration) -> Result<Self> {
+    /// yields a single direct client. `policy` is enforced on every
+    /// outbound target (initial URL and redirect hops).
+    pub fn new(
+        proxies: Vec<String>,
+        profile: Profile,
+        timeout: Duration,
+        policy: TargetPolicy,
+    ) -> Result<Self> {
         let mut clients = Vec::with_capacity(proxies.len().max(1));
         for proxy in proxies {
             clients.push(
@@ -206,6 +253,7 @@ impl ProxyPool {
                     .profile(profile)
                     .timeout(timeout)
                     .proxy(Some(proxy))
+                    .target_policy(policy.clone())
                     .build()?,
             );
         }
@@ -214,6 +262,7 @@ impl ProxyPool {
                 HttpClient::builder()
                     .profile(profile)
                     .timeout(timeout)
+                    .target_policy(policy)
                     .build()?,
             );
         }
@@ -245,11 +294,17 @@ impl ProxyPool {
 
 pub struct HttpClient {
     client: wreq::Client,
+    target_policy: TargetPolicy,
 }
 
 impl HttpClient {
     pub fn builder() -> HttpClientBuilder {
         HttpClientBuilder::default()
+    }
+
+    /// The domain allow/deny policy applied to outbound targets.
+    pub(crate) fn target_policy(&self) -> &TargetPolicy {
+        &self.target_policy
     }
 
     pub async fn get(&self, url: &str) -> Result<wreq::Response> {
@@ -317,6 +372,7 @@ pub struct HttpClientBuilder {
     redirects: usize,
     headers: HeaderMap,
     proxy: Option<String>,
+    target_policy: TargetPolicy,
 }
 
 impl Default for HttpClientBuilder {
@@ -334,6 +390,7 @@ impl Default for HttpClientBuilder {
             redirects: 10,
             headers,
             proxy: None,
+            target_policy: TargetPolicy::default(),
         }
     }
 }
@@ -359,11 +416,19 @@ impl HttpClientBuilder {
         self
     }
 
+    pub fn target_policy(mut self, policy: TargetPolicy) -> Self {
+        self.target_policy = policy;
+        self
+    }
+
     pub fn build(self) -> Result<HttpClient> {
         let mut builder = wreq::Client::builder()
             .emulation(self.profile.to_emulation())
             .timeout(self.timeout)
-            .redirect(ssrf_redirect_policy(self.redirects));
+            .redirect(ssrf_redirect_policy(
+                self.redirects,
+                self.target_policy.clone(),
+            ));
         if self.cookies {
             builder = builder.cookie_store(true);
         }
@@ -378,13 +443,18 @@ impl HttpClientBuilder {
         let client = builder
             .build()
             .map_err(|_| Error::internal("client", "client build failed"))?;
-        Ok(HttpClient { client })
+        Ok(HttpClient {
+            client,
+            target_policy: self.target_policy,
+        })
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::ErrorKind;
+    use futures::FutureExt;
 
     #[test]
     fn proxy_pool_round_robin_is_deterministic() {
@@ -396,6 +466,7 @@ mod tests {
             ],
             Profile::Chrome,
             Duration::from_secs(5),
+            TargetPolicy::default(),
         )
         .unwrap();
         assert_eq!(pool.len(), 3);
@@ -414,7 +485,13 @@ mod tests {
 
     #[test]
     fn proxy_pool_empty_yields_single_direct_client() {
-        let pool = ProxyPool::new(vec![], Profile::Firefox, Duration::from_secs(5)).unwrap();
+        let pool = ProxyPool::new(
+            vec![],
+            Profile::Firefox,
+            Duration::from_secs(5),
+            TargetPolicy::default(),
+        )
+        .unwrap();
         assert_eq!(pool.len(), 1);
         assert!(std::ptr::eq(
             pool.get_client() as *const HttpClient,
@@ -437,7 +514,49 @@ mod tests {
         assert!(default_user_agent(Profile::OkHttp).starts_with("okhttp/"));
         let r1 = default_user_agent(Profile::Random);
         let r2 = default_user_agent(Profile::Random);
-        assert_eq!(r1, r2, "random UA is cached");
+        assert_ne!(r1, r2, "random UA rotates per call, not cached once");
         assert!(UA_POOL.contains(&r1));
+        assert!(UA_POOL.contains(&r2));
+    }
+
+    #[test]
+    fn target_policy_allow_deny_and_subdomains() {
+        let policy = TargetPolicy {
+            allowed: vec!["Example.com".into()],
+            denied: vec!["evil.example.com".into()],
+        };
+        assert!(policy.domain_allowed("example.com"));
+        assert!(policy.domain_allowed("WWW.EXAMPLE.COM"));
+        assert!(policy.domain_allowed("blog.example.com"));
+        assert!(!policy.domain_allowed("evil.example.com"));
+        assert!(!policy.domain_allowed("other.org"));
+        assert!(!policy.domain_allowed("notexample.com"));
+        let open = TargetPolicy::default();
+        assert!(open.domain_allowed("anything.example"));
+        let deny_only = TargetPolicy {
+            allowed: vec![],
+            denied: vec!["blocked.org".into()],
+        };
+        assert!(!deny_only.domain_allowed("blocked.org"));
+        assert!(!deny_only.domain_allowed("www.blocked.org"));
+        assert!(deny_only.domain_allowed("fine.org"));
+    }
+
+    #[test]
+    fn extract_blocks_denied_domain_before_dns() {
+        let policy = TargetPolicy {
+            allowed: vec![],
+            denied: vec!["denied.example".into()],
+        };
+        let client = HttpClient::builder().target_policy(policy).build().unwrap();
+        let err = crate::extract::extract(&client, "http://denied.example/page", 2000, None)
+            .now_or_never();
+        assert!(matches!(
+            err,
+            Some(Err(Error {
+                kind: ErrorKind::InvalidQuery { .. },
+                ..
+            }))
+        ));
     }
 }

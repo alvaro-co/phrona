@@ -13,7 +13,7 @@ pub mod parse;
 pub mod rank;
 pub mod search;
 
-pub use client::{HttpClient, HttpClientBuilder, Profile};
+pub use client::{HttpClient, HttpClientBuilder, Profile, TargetPolicy};
 pub use config::{ConfigError, PhronaConfig};
 pub use error::{Error, Result};
 pub use extract::{ExtractedPage, extract, extract_from_html, extract_many, is_safe_ip};
