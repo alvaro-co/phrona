@@ -181,10 +181,9 @@ jobs:
   publish-crates:
     name: publish crates.io
     needs: [build]
-    if: ${{ env.CARGO_REGISTRY_TOKEN != '' }}
+    runs-on: ubuntu-latest
     env:
       CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Rust toolchain
@@ -192,6 +191,7 @@ jobs:
           rustup toolchain install stable --profile minimal
           rustup default stable
       - name: Publish phrona, then its dependents
+        if: ${{ env.CARGO_REGISTRY_TOKEN != '' }}
         run: |
           cargo publish --allow-dirty --token "$CARGO_REGISTRY_TOKEN" -p phrona
           cargo publish --allow-dirty --token "$CARGO_REGISTRY_TOKEN" -p phrona-api
@@ -202,16 +202,16 @@ jobs:
   publish-pypi:
     name: publish PyPI
     needs: [sdist, wheel]
-    if: ${{ env.PYPI_TOKEN != '' }}
+    runs-on: ubuntu-latest
     env:
       PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
-    runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
         with:
           path: dist
           merge-multiple: true
       - name: Publish wheels and sdist to PyPI
+        if: ${{ env.PYPI_TOKEN != '' }}
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           password: ${{ env.PYPI_TOKEN }}
