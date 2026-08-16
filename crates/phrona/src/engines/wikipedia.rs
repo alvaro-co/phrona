@@ -33,7 +33,7 @@ impl Engine for Wikipedia {
         );
         let resp = ctx.client.get(&url).await?;
         util::check_response(self.name(), &resp, util::MediaType::Json)?;
-        let body = resp.bytes().await.map_err(Error::from)?;
+        let body = util::read_body(resp, self.name()).await?;
         let json: serde_json::Value = serde_json::from_slice(&body)
             .map_err(|_| Error::schema("wikipedia", "invalid JSON response"))?;
         let Some((title, url)) = parse_opensearch(&json) else {
@@ -53,7 +53,7 @@ impl Engine for Wikipedia {
             ],
         );
         if let Ok(resp) = ctx.client.get(&extract_url).await {
-            if let Ok(bytes) = resp.bytes().await {
+            if let Ok(bytes) = util::read_body(resp, self.name()).await {
                 if let Ok(ext) = serde_json::from_slice::<serde_json::Value>(&bytes) {
                     if let Some(page) = ext
                         .pointer("/query/pages")

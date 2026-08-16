@@ -6,8 +6,12 @@ use crate::error::{Error, Result};
 use crate::models::{Category, RawResult};
 use crate::parse;
 
-/// Anna's Archive book search.
+/// Anna's Archive book search. The project's domains rotate after TLD
+/// seizures, so the engine tries a list of known mirrors in order and uses
+/// the first one that responds with a parseable SERP.
 pub struct AnnasArchive;
+
+const ANNAS_DOMAINS: &[&str] = &["annas-archive.gd", "annas-archive.se", "annas-archive.org"];
 
 #[async_trait]
 impl Engine for AnnasArchive {
@@ -21,22 +25,37 @@ impl Engine for AnnasArchive {
 
     async fn search(&self, ctx: &EngineContext<'_>) -> Result<Vec<RawResult>> {
         let opts = ctx.opts;
-        let url = parse::with_query(
-            "https://annas-archive.gd/search",
-            [
-                ("q", opts.query.as_str()),
-                ("page", opts.page.to_string().as_str()),
-            ],
-        );
-        let resp = ctx.client.get(&url).await?;
-        util::check_response(self.name(), &resp, util::MediaType::Html)?;
-        let body = resp.bytes().await.map_err(Error::from)?;
-        let text = String::from_utf8_lossy(&body);
-        Ok(parse_annas(&text, self.name()))
+        let mut last_err: Option<Error> = None;
+        for domain in ANNAS_DOMAINS {
+            let url = parse::with_query(
+                &format!("https://{domain}/search"),
+                [
+                    ("q", opts.query.as_str()),
+                    ("page", opts.page.to_string().as_str()),
+                ],
+            );
+            match ctx.client.get(&url).await {
+                Ok(resp) => match util::check_response(self.name(), &resp, util::MediaType::Html) {
+                    Ok(()) => match util::read_body(resp, self.name()).await {
+                        Ok(body) => {
+                            let text = String::from_utf8_lossy(&body);
+                            let results = parse_annas(&text, self.name(), domain);
+                            if !results.is_empty() {
+                                return Ok(results);
+                            }
+                        }
+                        Err(e) => last_err = Some(e),
+                    },
+                    Err(e) => last_err = Some(e),
+                },
+                Err(e) => last_err = Some(e),
+            }
+        }
+        Err(last_err.unwrap_or_else(|| Error::internal("annas_archive", "all mirrors failed")))
     }
 }
 
-pub fn parse_annas(html: &str, engine: &str) -> Vec<RawResult> {
+pub fn parse_annas(html: &str, engine: &str, domain: &str) -> Vec<RawResult> {
     let cleaned = html.replace("<!--", "").replace("-->", "");
     let doc = parse::parse_html(&cleaned);
     let mut out = Vec::new();
@@ -68,7 +87,7 @@ pub fn parse_annas(html: &str, engine: &str) -> Vec<RawResult> {
                 url: if href.starts_with("http") {
                     href
                 } else {
-                    format!("https://annas-archive.gd{href}")
+                    format!("https://{domain}{href}")
                 },
                 author,
                 publisher,
@@ -93,7 +112,7 @@ mod tests {
         if !crate::engines::util::fixture_parses("annas_archive.html") {
             return;
         }
-        let results = parse_annas(html, "annas_archive");
+        let results = parse_annas(html, "annas_archive", "annas-archive.gd");
         assert!(!results.is_empty());
     }
 }

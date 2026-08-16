@@ -66,7 +66,7 @@ impl Engine for Startpage {
             .post_form_with_headers("https://www.startpage.com/sp/search", &body, &headers)
             .await?;
         util::check_response(self.name(), &resp, util::MediaType::Html)?;
-        let body = resp.bytes().await.map_err(Error::from)?;
+        let body = util::read_body(resp, self.name()).await?;
         let text = String::from_utf8_lossy(&body);
         Ok(parse_startpage(&text, self.name()))
     }
@@ -77,7 +77,7 @@ pub async fn fetch_sc(ctx: &EngineContext<'_>) -> Result<String> {
         return Ok(sc);
     }
     let resp = ctx.client.get("https://www.startpage.com/").await?;
-    let body = resp.bytes().await.map_err(Error::from)?;
+    let body = util::read_body(resp, "startpage").await?;
     let text = String::from_utf8_lossy(&body);
     let sc = {
         let doc = parse::parse_html(&text);

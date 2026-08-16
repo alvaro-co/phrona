@@ -2,7 +2,7 @@ use async_trait::async_trait;
 
 use crate::engine::{Engine, EngineContext};
 use crate::engines::util;
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::models::{Category, RawResult};
 
 /// DuckDuckGo HTML endpoint (no-JS) - `html.duckduckgo.com`.
@@ -37,7 +37,7 @@ impl Engine for DuckDuckGo {
         let url = crate::parse::with_query("https://html.duckduckgo.com/html/", params);
         let resp = ctx.client.get(&url).await?;
         util::check_response(self.name(), &resp, util::MediaType::Html)?;
-        let body = resp.bytes().await.map_err(Error::from)?;
+        let body = util::read_body(resp, self.name()).await?;
         let text = String::from_utf8_lossy(&body);
         let (mut results, answer) = util::parse_ddg_html(&text, self.name());
         if let Some(a) = answer {

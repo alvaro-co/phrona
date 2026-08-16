@@ -58,7 +58,7 @@ impl Engine for Qwant {
         );
         let resp = ctx.client.get_with_headers(&url, &headers).await?;
         util::check_response(self.name(), &resp, util::MediaType::Json)?;
-        let body = resp.bytes().await.map_err(Error::from)?;
+        let body = util::read_body(resp, self.name()).await?;
         let json: serde_json::Value = crate::engines::util::parse_json_body(self.name(), &body)?;
         if json.get("status").and_then(|s| s.as_str()) != Some("success") {
             let err = json.get("error_code").and_then(|e| e.as_i64()).unwrap_or(0);

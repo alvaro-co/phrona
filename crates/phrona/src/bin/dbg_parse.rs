@@ -76,11 +76,9 @@ fn main() {
         "yahoo_news.html",
         yahoo_news::parse_yahoo_news
     );
-    try_parse!(
-        "annas_archive",
-        "annas_archive.html",
-        annas_archive::parse_annas
-    );
+    try_parse!("annas_archive", "annas_archive.html", |body, name| {
+        annas_archive::parse_annas(body, name, "annas-archive.gd")
+    });
     eprintln!("unknown engine: {name}");
     std::process::exit(1);
 }

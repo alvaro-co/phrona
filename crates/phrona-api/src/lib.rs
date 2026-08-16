@@ -46,6 +46,9 @@ pub struct AppState {
     pub rate_limit_per_minute: u32,
     /// Maximum accepted request body size in bytes.
     pub max_body_bytes: u64,
+    /// Reverse-proxy IPs whose `X-Forwarded-For` header is trusted for
+    /// client IP extraction (see [`client_ip`]).
+    pub trusted_proxies: Vec<IpAddr>,
     rate: Mutex<HashMap<Option<IpAddr>, RateWindow>>,
 }
 
@@ -56,6 +59,7 @@ impl AppState {
         max_results_limit: usize,
         rate_limit_per_minute: u32,
         max_body_bytes: u64,
+        trusted_proxies: Vec<IpAddr>,
     ) -> Self {
         Self {
             client,
@@ -64,6 +68,7 @@ impl AppState {
             max_results_limit,
             rate_limit_per_minute,
             max_body_bytes,
+            trusted_proxies,
             rate: Mutex::new(HashMap::new()),
         }
     }
@@ -363,6 +368,27 @@ where
 }
 
 /// In-memory fixed-window rate limiter middleware: honors
+/// Resolve the client IP for rate limiting. The peer address is used
+/// directly unless it belongs to `trusted_proxies` (an operator-configured
+/// list of reverse proxies), in which case the leftmost `X-Forwarded-For`
+/// address is trusted — a proxy chain appends each hop, so the first entry
+/// is the original client. Without a trusted proxy, the header is never
+/// consulted, so it cannot be spoofed.
+fn client_ip(trusted: &[IpAddr], peer: SocketAddr, headers: &HeaderMap) -> IpAddr {
+    if trusted.contains(&peer.ip()) {
+        if let Some(ff) = headers
+            .get("x-forwarded-for")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.split(',').next())
+        {
+            if let Ok(ip) = ff.trim().parse::<IpAddr>() {
+                return ip;
+            }
+        }
+    }
+    peer.ip()
+}
+
 /// `server.rate_limit_per_minute` per client IP (falling back to a single
 /// global bucket when the peer address is unknown, e.g. in tests).
 async fn rate_limit(
@@ -373,7 +399,7 @@ async fn rate_limit(
     let ip = req
         .extensions()
         .get::<ConnectInfo<SocketAddr>>()
-        .map(|c| c.0.ip());
+        .map(|c| client_ip(&state.trusted_proxies, c.0, req.headers()));
     if !state.check_rate(ip) {
         return Err(AppError::rate_limited(state.rate_limit_per_minute));
     }
@@ -505,6 +531,7 @@ pub fn router(cfg: PhronaConfig) -> Router {
         cfg.max_results_limit(),
         cfg.server.rate_limit_per_minute,
         cfg.server.max_body_bytes,
+        cfg.server.trusted_proxies.clone(),
     ));
 
     let protected = Router::new()
@@ -629,7 +656,14 @@ mod tests {
     #[test]
     fn authorized_semantics() {
         let client = PhronaConfig::defaults().search_client().unwrap();
-        let state = AppState::new(client, Some("test-secret".into()), 1000, 0, 100_000);
+        let state = AppState::new(
+            client,
+            Some("test-secret".into()),
+            1000,
+            0,
+            100_000,
+            Vec::new(),
+        );
         assert!(state.authorized(Some("test-secret")));
         // wrong key, shorter key, longer key, missing key
         assert!(!state.authorized(Some("wrong")));
@@ -643,9 +677,42 @@ mod tests {
             1000,
             0,
             100_000,
+            Vec::new(),
         );
         assert!(open.authorized(None));
         assert!(open.authorized(Some("anything")));
+    }
+
+    #[test]
+    fn client_ip_honors_trusted_proxies_only() {
+        let peer = "10.0.0.5:443".parse::<SocketAddr>().unwrap();
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-forwarded-for",
+            axum::http::HeaderValue::from_static("203.0.113.9, 10.0.0.1"),
+        );
+        // untrusted peer: the header is ignored (no spoofing)
+        assert_eq!(client_ip(&[], peer, &headers), peer.ip());
+        // trusted peer: leftmost forwarded address wins
+        assert_eq!(
+            client_ip(&["10.0.0.5".parse().unwrap()], peer, &headers),
+            "203.0.113.9".parse::<IpAddr>().unwrap()
+        );
+        // trusted peer with malformed header falls back to the peer
+        let mut bad = HeaderMap::new();
+        bad.insert(
+            "x-forwarded-for",
+            axum::http::HeaderValue::from_static("not-an-ip"),
+        );
+        assert_eq!(
+            client_ip(&["10.0.0.5".parse().unwrap()], peer, &bad),
+            peer.ip()
+        );
+        // a different trusted proxy listed but not the actual peer: no trust
+        assert_eq!(
+            client_ip(&["10.0.0.9".parse().unwrap()], peer, &headers),
+            peer.ip()
+        );
     }
 
     #[tokio::test]
