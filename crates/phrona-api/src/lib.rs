@@ -1,16 +1,20 @@
 pub mod frontend;
 pub mod grounding;
+pub mod metrics;
 pub mod tavily;
 pub mod tools;
 
 use std::collections::HashMap;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use axum::extract::rejection::QueryRejection;
-use axum::extract::{ConnectInfo, FromRequest, FromRequestParts, Query, Request, State};
+use axum::extract::rejection::{BytesRejection, FailedToBufferBody, JsonRejection, QueryRejection};
+use axum::extract::{
+    ConnectInfo, DefaultBodyLimit, FromRequest, FromRequestParts, Query, Request, State,
+};
 use axum::http::{HeaderMap, StatusCode};
+use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -42,7 +46,7 @@ pub struct AppState {
     pub rate_limit_per_minute: u32,
     /// Maximum accepted request body size in bytes.
     pub max_body_bytes: u64,
-    rate: Mutex<HashMap<Option<SocketAddr>, RateWindow>>,
+    rate: Mutex<HashMap<Option<IpAddr>, RateWindow>>,
 }
 
 impl AppState {
@@ -71,7 +75,7 @@ impl AppState {
     /// Fixed-window rate limit keyed on the client IP (falling back to a
     /// single global bucket when the client address is unknown, e.g. in
     /// unit tests). Returns `true` when the request is allowed.
-    pub fn check_rate(&self, ip: Option<SocketAddr>) -> bool {
+    pub fn check_rate(&self, ip: Option<IpAddr>) -> bool {
         if self.rate_limit_per_minute == 0 {
             return true;
         }
@@ -89,13 +93,6 @@ impl AppState {
         }
         window.count += 1;
         true
-    }
-
-    /// The client IP from the `ConnectInfo` extension, when present.
-    pub fn client_ip(&self, req: &Request) -> Option<SocketAddr> {
-        req.extensions()
-            .get::<ConnectInfo<SocketAddr>>()
-            .map(|c| c.0)
     }
 }
 
@@ -221,7 +218,12 @@ impl<T: DeserializeOwned> FromRequest<Arc<AppState>> for JsonBody<T> {
         }
         let Json(v) = Json::<T>::from_request(req, state)
             .await
-            .map_err(|e| AppError::bad_request(format!("invalid JSON body: {e}")))?;
+            .map_err(|e| match &e {
+                JsonRejection::BytesRejection(BytesRejection::FailedToBufferBody(
+                    FailedToBufferBody::LengthLimitError(_),
+                )) => AppError::body_too_large(state.max_body_bytes),
+                _ => AppError::bad_request(format!("invalid JSON body: {e}")),
+            })?;
         Ok(Self(v))
     }
 }
@@ -238,13 +240,9 @@ struct SearchParams {
     language: Option<String>,
     time_range: Option<String>,
     filters: Option<String>,
-    api_key: Option<String>,
 }
 
-fn build_options(p: &SearchParams, state: &AppState) -> AppResult<SearchOptions> {
-    if !state.authorized(p.api_key.as_deref()) {
-        return Err(AppError(ErrorKind::Unauthorized));
-    }
+fn build_options(p: &SearchParams, max_results_limit: usize) -> AppResult<SearchOptions> {
     let mut opts = SearchOptions::new(p.q.clone());
     if let Some(c) = &p.category {
         opts.category = c.parse::<Category>().map_err(|_| {
@@ -272,7 +270,7 @@ fn build_options(p: &SearchParams, state: &AppState) -> AppResult<SearchOptions>
         opts.page = page.max(1);
     }
     if let Some(m) = p.max_results {
-        opts.max_results = m.clamp(1, state.max_results_limit);
+        opts.max_results = m.clamp(1, max_results_limit);
     }
     if let Some(s) = &p.safesearch {
         opts.safesearch = s.parse::<phrona::SafeSearch>().map_err(|_| {
@@ -303,10 +301,65 @@ fn header_key(headers: &HeaderMap) -> Option<String> {
         })
 }
 
-/// Extract the API key from the x-api-key header or the Authorization:
-/// Bearer header. Used by every authenticated handler.
-pub(crate) fn api_key_from_headers(headers: &HeaderMap) -> Option<String> {
-    header_key(headers)
+/// Resolve the API key for endpoints that accept credentials in the JSON
+/// body (e.g. the Tavily-compatible routes): the body key wins, headers are
+/// the fallback. Query strings are never consulted.
+pub(crate) fn auth_key(headers: &HeaderMap, body_key: Option<&str>) -> Option<String> {
+    body_key.map(str::to_string).or_else(|| header_key(headers))
+}
+
+/// Header-only auth for GET endpoints. Query-string `api_key` parameters are
+/// rejected with a 400: credentials in URLs leak through logs, proxies and
+/// referrers and are a classic SSRF/credential-theft vector.
+pub struct HeaderAuth {
+    key: Option<String>,
+}
+
+impl HeaderAuth {
+    pub fn key(&self) -> Option<&str> {
+        self.key.as_deref()
+    }
+}
+
+impl<S> FromRequestParts<S> for HeaderAuth
+where
+    S: Send + Sync,
+{
+    type Rejection = AppError;
+
+    async fn from_request_parts(
+        parts: &mut axum::http::request::Parts,
+        _state: &S,
+    ) -> AppResult<Self> {
+        if let Some(query) = parts.uri.query()
+            && url::form_urlencoded::parse(query.as_bytes()).any(|(k, _)| k == "api_key")
+        {
+            return Err(AppError::bad_request(
+                "api_key in the query string is disallowed for security; use the x-api-key header or Authorization: Bearer instead",
+            ));
+        }
+        Ok(Self {
+            key: header_key(&parts.headers),
+        })
+    }
+}
+
+/// In-memory fixed-window rate limiter middleware: honors
+/// `server.rate_limit_per_minute` per client IP (falling back to a single
+/// global bucket when the peer address is unknown, e.g. in tests).
+async fn rate_limit(
+    State(state): State<Arc<AppState>>,
+    req: Request,
+    next: Next,
+) -> AppResult<Response> {
+    let ip = req
+        .extensions()
+        .get::<ConnectInfo<SocketAddr>>()
+        .map(|c| c.0.ip());
+    if !state.check_rate(ip) {
+        return Err(AppError::rate_limited(state.rate_limit_per_minute));
+    }
+    Ok(next.run(req).await)
 }
 
 async fn health(State(state): State<Arc<AppState>>) -> Json<Value> {
@@ -355,13 +408,13 @@ async fn engines(JsonQuery(p): JsonQuery<EnginesParams>) -> AppResult<Json<Value
 
 async fn search_route(
     State(state): State<Arc<AppState>>,
+    auth: HeaderAuth,
     JsonQuery(p): JsonQuery<SearchParams>,
-    req: Request,
 ) -> AppResult<Json<SearchResponse>> {
-    if !state.check_rate(state.client_ip(&req)) {
-        return Err(AppError::rate_limited(state.rate_limit_per_minute));
+    if !state.authorized(auth.key()) {
+        return Err(AppError(ErrorKind::Unauthorized));
     }
-    let opts = build_options(&p, &state)?;
+    let opts = build_options(&p, state.max_results_limit)?;
     let resp = state.client.search(opts).await?;
     Ok(Json(resp))
 }
@@ -371,18 +424,14 @@ struct SuggestParams {
     q: String,
     source: Option<String>,
     region: Option<String>,
-    api_key: Option<String>,
 }
 
 async fn suggest_route(
     State(state): State<Arc<AppState>>,
+    auth: HeaderAuth,
     JsonQuery(p): JsonQuery<SuggestParams>,
-    req: Request,
 ) -> AppResult<Json<Value>> {
-    if !state.check_rate(state.client_ip(&req)) {
-        return Err(AppError::rate_limited(state.rate_limit_per_minute));
-    }
-    if !state.authorized(p.api_key.as_deref()) {
+    if !state.authorized(auth.key()) {
         return Err(AppError(ErrorKind::Unauthorized));
     }
     let region = p.region.unwrap_or_else(|| "us-en".to_string());
@@ -423,8 +472,15 @@ async fn suggest_route(
 /// (profile / timeout / proxies / concurrency), the API key, the
 /// `max_results` clamp, the rate limit and the body-size cap all come from
 /// the config.
+///
+/// Protected endpoints (every `/v1/*` data route plus the Tavily-compatible
+/// aliases) run under the per-IP rate limiter; `GET /metrics`, `/health` and
+/// the frontend stay unauthenticated and unthrottled.
 pub fn router(cfg: PhronaConfig) -> Router {
-    let client = cfg.search_client().expect("build search client");
+    let client = cfg
+        .search_client()
+        .expect("build search client")
+        .with_observer(Arc::new(metrics::EngineMetricsObserver));
     let state = Arc::new(AppState::new(
         client,
         cfg.server.api_key.clone(),
@@ -433,10 +489,7 @@ pub fn router(cfg: PhronaConfig) -> Router {
         cfg.server.max_body_bytes,
     ));
 
-    Router::new()
-        .route("/", get(frontend::index))
-        .route("/health", get(health))
-        .route("/v1/engines", get(engines))
+    let protected = Router::new()
         .route("/v1/search", get(search_route))
         .route("/v1/suggest", get(suggest_route))
         .route(
@@ -447,22 +500,60 @@ pub fn router(cfg: PhronaConfig) -> Router {
         .route("/v1/grounding", get(grounding::get).post(grounding::post))
         .route("/search", post(tavily::search))
         .route("/v1/tavily", post(tavily::search))
-        .nest_service(
-            "/static",
-            tower_http::services::ServeDir::new(frontend::frontend_dir()),
+        .layer(middleware::from_fn_with_state(state.clone(), rate_limit));
+
+    protected
+        .merge(
+            Router::new()
+                .route("/", get(frontend::index))
+                .route("/health", get(health))
+                .route("/metrics", get(metrics::metrics_route))
+                .route("/v1/engines", get(engines))
+                .nest_service(
+                    "/static",
+                    tower_http::services::ServeDir::new(frontend::frontend_dir()),
+                )
+                .fallback(frontend::index),
         )
-        .fallback(frontend::index)
+        .layer(DefaultBodyLimit::max(cfg.server.max_body_bytes as usize))
+        .layer(middleware::from_fn(metrics::http_layer))
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
         .with_state(state)
 }
 
-/// Serve the REST API on `addr`. Blocks until the server stops.
+/// Wait for Ctrl+C or SIGTERM, then return so the server can drain
+/// in-flight requests gracefully.
+pub async fn shutdown_signal() {
+    let ctrl_c = async {
+        tokio::signal::ctrl_c()
+            .await
+            .expect("install Ctrl+C handler");
+    };
+    #[cfg(unix)]
+    let terminate = async {
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("install SIGTERM handler")
+            .recv()
+            .await;
+    };
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+    tokio::select! {
+        _ = ctrl_c => {}
+        _ = terminate => {}
+    }
+}
+
+/// Serve the REST API on `addr`. Blocks until the server stops (Ctrl+C or
+/// SIGTERM trigger a graceful shutdown that drains in-flight requests).
 pub async fn serve(addr: SocketAddr, cfg: PhronaConfig) -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind(addr).await?;
     tracing::info!("phrona-api listening on http://{addr}");
     let app = router(cfg).into_make_service_with_connect_info::<SocketAddr>();
-    axum::serve(listener, app).await?;
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
+        .await?;
     Ok(())
 }
 
@@ -525,6 +616,7 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri("/v1/search")
+                    .header("x-api-key", "test-secret")
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -540,6 +632,92 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn query_string_api_key_is_rejected_with_400() {
+        use tower::ServiceExt;
+        let router = router_with(PhronaConfig::defaults());
+        for path in [
+            "/v1/search?q=rust&api_key=test-secret",
+            "/v1/suggest?q=ru&api_key=test-secret",
+            "/v1/test?query=rust&api_key=test-secret",
+            "/v1/extract?url=https://example.com&api_key=test-secret",
+            "/v1/grounding?query=rust&api_key=test-secret",
+        ] {
+            let resp = router
+                .clone()
+                .oneshot(Request::builder().uri(path).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), StatusCode::BAD_REQUEST, "path {path}");
+            let body = axum::body::to_bytes(resp.into_body(), 1024).await.unwrap();
+            let v: Value = serde_json::from_slice(&body).unwrap();
+            let msg = v["error"].as_str().unwrap_or("");
+            assert!(
+                msg.contains("query string"),
+                "path {path} got unexpected message: {msg}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn header_auth_grants_access_before_validation() {
+        use tower::ServiceExt;
+        let router = router_with(PhronaConfig::defaults());
+        let resp = router
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/search?q=rust&category=bogus")
+                    .header("x-api-key", "test-secret")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        // auth passed (no 401); validation then rejects the category
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        let body = axum::body::to_bytes(resp.into_body(), 1024).await.unwrap();
+        let v: Value = serde_json::from_slice(&body).unwrap();
+        assert!(
+            v["error"]
+                .as_str()
+                .unwrap_or("")
+                .contains("invalid category")
+        );
+    }
+
+    #[tokio::test]
+    async fn bearer_token_is_accepted() {
+        use tower::ServiceExt;
+        let router = router_with(PhronaConfig::defaults());
+        let resp = router
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/search?q=rust&category=bogus")
+                    .header("authorization", "Bearer test-secret")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    }
+
+    #[test]
+    fn auth_key_resolves_body_then_headers() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-api-key", "header-key".parse().unwrap());
+        assert_eq!(auth_key(&headers, None).as_deref(), Some("header-key"));
+        assert_eq!(
+            auth_key(&headers, Some("body-key")).as_deref(),
+            Some("body-key")
+        );
+        assert_eq!(auth_key(&headers, Some("")), Some(String::new()));
+        let mut bearer = HeaderMap::new();
+        bearer.insert("authorization", "Bearer b-key".parse().unwrap());
+        assert_eq!(auth_key(&bearer, None).as_deref(), Some("b-key"));
+        assert_eq!(auth_key(&HeaderMap::new(), None), None);
+    }
+
+    #[tokio::test]
     async fn rate_limit_returns_429_after_window_exhausted() {
         use tower::ServiceExt;
         let mut cfg = PhronaConfig::defaults();
@@ -550,7 +728,7 @@ mod tests {
                 .clone()
                 .oneshot(
                     Request::builder()
-                        .uri("/v1/search?q=rust")
+                        .uri("/v1/search?q=rust&category=bogus")
                         .body(Body::empty())
                         .unwrap(),
                 )
@@ -597,5 +775,34 @@ mod tests {
         let body = axum::body::to_bytes(resp.into_body(), 1024).await.unwrap();
         let v: Value = serde_json::from_slice(&body).unwrap();
         assert!(v["error"].as_str().unwrap().contains("8-byte limit"));
+    }
+
+    #[tokio::test]
+    async fn rate_limit_honors_connect_info_ip() {
+        use tower::ServiceExt;
+        let mut cfg = PhronaConfig::defaults();
+        cfg.server.api_key = Some("test-secret".into());
+        cfg.server.rate_limit_per_minute = 1;
+        let router = super::router(cfg);
+        // Same IP, different ephemeral ports (as real TCP clients produce):
+        // the window must be keyed on the IP, not the socket address, or a
+        // fresh bucket would be allocated per connection and the limiter
+        // would never trip.
+        let req = |port: u16| {
+            Request::builder()
+                .uri("/v1/search?q=rust&category=bogus")
+                .extension(ConnectInfo(SocketAddr::from(([127, 0, 0, 1], port))))
+                .header("x-api-key", "test-secret")
+                .body(Body::empty())
+                .unwrap()
+        };
+        assert_eq!(
+            router.clone().oneshot(req(4242)).await.unwrap().status(),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            router.clone().oneshot(req(4243)).await.unwrap().status(),
+            StatusCode::TOO_MANY_REQUESTS
+        );
     }
 }

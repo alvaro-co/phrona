@@ -95,7 +95,8 @@ jobs:
           uv build
       - name: Rename for release
         run: |
-          mkdir -p dist && cp dist/*.whl dist/phrona-wheel.whl 2>/dev/null || true
+          mkdir -p dist
+          cp "$(ls dist/phrona-*.whl | head -n1)" dist/phrona-wheel.whl
       - name: Upload wheel
         uses: actions/upload-artifact@v4
         with:

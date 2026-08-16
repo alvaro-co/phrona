@@ -26,11 +26,22 @@ jobs:
       - name: Rust toolchain
         run: rustup toolchain install stable --profile minimal && rustup default stable
 
+      - name: Install cargo-audit and cargo-deny
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit,cargo-deny
+
       - name: Format
         run: cargo fmt --all --check
 
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Audit dependencies
+        run: cargo audit
+
+      - name: Deny policy check (licenses, bans, sources)
+        run: cargo deny check
 
       - name: Tests
         run: cargo test --workspace

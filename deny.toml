@@ -1,0 +1,50 @@
+# cargo-deny policy for the phrona workspace.
+# Run locally with:  cargo deny check
+
+[graph]
+# Ensure the dependency graph is completely resolvable.
+exclude-unpublished = false
+
+[advisories]
+db-path = "~/.cargo/advisory-db"
+# Fail the build on any vulnerability or unmaintained crate.
+yanked = "deny"
+ignore = []
+
+[licenses]
+# Only permissive licenses are allowed into the dependency tree.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+    "Unlicense",
+    "CC0-1.0",
+    "CDLA-Permissive-2.0",
+    "OpenSSL",
+    "MPL-2.0",
+    "AGPL-3.0-only",
+]
+# The workspace's own crates (phrona, phonrona-api, ...) are covered by the
+# repository license; they are not published to crates.io with the rest.
+private = { ignore = true }
+confidence-threshold = 0.8
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+deny = []
+skip = []
+skip-tree = []
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-git = []
+
+[output]
+feature-depth = 1
