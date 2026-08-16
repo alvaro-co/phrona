@@ -2,7 +2,7 @@ use async_trait::async_trait;
 
 use crate::engine::{Engine, EngineContext};
 use crate::engines::util;
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::models::{Category, RawResult, SafeSearch};
 use crate::parse;
 
@@ -38,7 +38,7 @@ impl Engine for MojeekImages {
         );
         let resp = ctx.client.get_with_headers(&url, &headers).await?;
         util::check_response(self.name(), &resp, util::MediaType::Html)?;
-        let body = resp.bytes().await.map_err(Error::from)?;
+        let body = util::read_body(resp, self.name()).await?;
         let text = String::from_utf8_lossy(&body);
         Ok(parse_mojeek_images(&text, self.name()))
     }

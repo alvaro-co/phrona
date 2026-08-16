@@ -526,7 +526,11 @@ fn fixture_parses(name: &str, body: &str) -> bool {
             "startpage_images",
         )),
         "yahoo_news.html" => Some(yahoo_news::parse_yahoo_news(body, "yahoo_news")),
-        "annas_archive.html" => Some(annas_archive::parse_annas(body, "annas_archive")),
+        "annas_archive.html" => Some(annas_archive::parse_annas(
+            body,
+            "annas_archive",
+            "annas-archive.gd",
+        )),
         _ => None,
     };
     if let Some(results) = parsed_html {

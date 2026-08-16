@@ -53,10 +53,10 @@ fn parse_category(s: &str) -> PyResult<Category> {
     })
 }
 
-fn to_py(v: &impl serde::Serialize) -> PyResult<Py<PyAny>> {
+fn to_py(py: Python<'_>, v: &impl serde::Serialize) -> PyResult<Py<PyAny>> {
     let j =
         serde_json::to_value(v).map_err(|e| PyValueError::new_err(format!("serialize: {e}")))?;
-    Python::attach(|py| json_to_py(py, &j))
+    json_to_py(py, &j)
 }
 
 /// Convert a serde_json::Value into the matching Python object.
@@ -160,7 +160,7 @@ impl Client {
                     .map_err(|e| e.to_string())
             })
             .map_err(PyValueError::new_err)?;
-        to_py(&resp)
+        to_py(py, &resp)
     }
 
     /// Query suggestions. source: duckduckgo, google, bing, brave, startpage,
@@ -204,7 +204,7 @@ impl Client {
                 }
             })
             .map_err(PyValueError::new_err)?;
-        to_py(&value)
+        to_py(py, &value)
     }
 
     /// Fetch a URL and extract its readable main content (AI grounding).
@@ -228,7 +228,7 @@ impl Client {
                     .map_err(|e| e.to_string())
             })
             .map_err(PyValueError::new_err)?;
-        to_py(&page)
+        to_py(py, &page)
     }
 
     /// List available engines per category.
@@ -251,7 +251,7 @@ impl Client {
                 Ok::<_, PyErr>(serde_json::Value::Object(out))
             })
         });
-        to_py(&out?)
+        to_py(py, &out?)
     }
 }
 

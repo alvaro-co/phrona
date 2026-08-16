@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use crate::engine::{Engine, EngineContext};
 use crate::engines::util;
 use crate::engines::util::ddg_vqd;
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::models::{Category, RawResult, SafeSearch};
 use crate::parse;
 
@@ -57,7 +57,7 @@ impl Engine for DuckDuckGoVideos {
         let url = parse::with_query("https://duckduckgo.com/v.js", params);
         let resp = ctx.client.get(&url).await?;
         util::check_response(self.name(), &resp, util::MediaType::Json)?;
-        let body = resp.bytes().await.map_err(Error::from)?;
+        let body = util::read_body(resp, self.name()).await?;
         let json = util::parse_json_body(self.name(), &body)?;
         Ok(parse_ddg_videos(&json, self.name()))
     }

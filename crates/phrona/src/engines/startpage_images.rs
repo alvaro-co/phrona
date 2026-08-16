@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use crate::engine::{Engine, EngineContext};
 use crate::engines::startpage::fetch_sc;
 use crate::engines::util;
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::models::{Category, RawResult, SafeSearch};
 use crate::parse;
 
@@ -61,7 +61,7 @@ impl Engine for StartpageImages {
             .post_form_with_headers("https://www.startpage.com/sp/search", &body, &headers)
             .await?;
         util::check_response(self.name(), &resp, util::MediaType::Html)?;
-        let body = resp.bytes().await.map_err(Error::from)?;
+        let body = util::read_body(resp, self.name()).await?;
         let text = String::from_utf8_lossy(&body);
         Ok(parse_startpage_images(&text, self.name()))
     }

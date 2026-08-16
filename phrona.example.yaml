@@ -38,6 +38,11 @@ server:
   rate_limit_per_minute: 120
   # Maximum accepted request body size in bytes (default: 2097152 = 2 MiB).
   max_body_bytes: 2097152
+  # IPs of reverse proxies directly in front of the server (default: none).
+  # When the peer address matches, rate limiting trusts the leftmost
+  # X-Forwarded-For address as the client IP. Never set this for a server
+  # reachable directly by clients, or the header can be spoofed.
+  trusted_proxies: []
 
 search:
   # Overall deadline for a search, in seconds (default: 15).

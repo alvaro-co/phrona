@@ -34,6 +34,10 @@ pub struct TavilyRequest {
     pub include_answer: bool,
     #[serde(default)]
     pub include_raw_content: bool,
+    /// Accepted for compatibility with Tavily clients; only meaningful for
+    /// Tavily's image-search endpoint, which this server does not expose.
+    #[serde(default)]
+    pub include_image_descriptions: bool,
     #[serde(default)]
     pub include_domains: Option<Vec<String>>,
     #[serde(default)]
@@ -109,6 +113,13 @@ pub async fn search(
         Category::Web
     };
     let depth = req.search_depth.as_deref().unwrap_or("basic");
+    // "advanced" is honored by querying every engine in the category;
+    // anything else is rejected loudly instead of silently coerced.
+    if !matches!(depth, "basic" | "advanced") {
+        return Err(AppError::bad_request(format!(
+            "invalid search_depth '{depth}', expected 'basic' or 'advanced'"
+        )));
+    }
     if depth == "basic" {
         let mut engines = match opts.category {
             Category::News => vec!["bing_news".into(), "duckduckgo_news".into()],

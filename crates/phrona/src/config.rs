@@ -11,7 +11,7 @@
 //! [`PhronaConfig::from_yaml_str`]. Every field has a default, so partial
 //! files and `phrona.example.yaml`-style snippets are valid.
 
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -35,6 +35,7 @@ pub const ENV_OVERRIDES: &[&str] = &[
     "PHRONA_API_KEY",
     "PHRONA_RATE_LIMIT_PER_MINUTE",
     "PHRONA_MAX_BODY_BYTES",
+    "PHRONA_SERVER_TRUSTED_PROXIES",
     "PHRONA_SEARCH_TIMEOUT_SECS",
     "PHRONA_SEARCH_MAX_RESULTS_LIMIT",
     "PHRONA_SEARCH_CONCURRENCY_LIMIT",
@@ -130,6 +131,12 @@ pub struct ServerConfig {
     /// Maximum accepted request body size in bytes.
     #[serde(default = "default_max_body_bytes")]
     pub max_body_bytes: u64,
+    /// IPs of reverse proxies directly in front of the server. When the
+    /// peer address belongs to this list, rate limiting trusts the
+    /// leftmost `X-Forwarded-For` address as the client IP; otherwise the
+    /// peer address is used. Empty (default) never trusts the header.
+    #[serde(default)]
+    pub trusted_proxies: Vec<IpAddr>,
 }
 
 impl Default for ServerConfig {
@@ -140,6 +147,7 @@ impl Default for ServerConfig {
             api_key: None,
             rate_limit_per_minute: default_rate_limit(),
             max_body_bytes: default_max_body_bytes(),
+            trusted_proxies: Vec::new(),
         }
     }
 }
@@ -311,6 +319,17 @@ impl PhronaConfig {
                     self.server.max_body_bytes = value
                         .parse()
                         .map_err(|e: std::num::ParseIntError| bad(name, e.to_string()))?
+                }
+                "PHRONA_SERVER_TRUSTED_PROXIES" => {
+                    self.server.trusted_proxies = value
+                        .split(',')
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .map(|s| {
+                            s.parse::<IpAddr>()
+                                .map_err(|e: std::net::AddrParseError| bad(name, e.to_string()))
+                        })
+                        .collect::<std::result::Result<Vec<_>, _>>()?
                 }
                 "PHRONA_SEARCH_TIMEOUT_SECS" => {
                     self.search.timeout_secs = value

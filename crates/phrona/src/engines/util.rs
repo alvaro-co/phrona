@@ -115,6 +115,37 @@ pub fn classify(
     Ok(())
 }
 
+/// Hard cap for a single engine response body. SERP pages are a few hundred
+/// KiB at most; anything past this limit is a hostile or misconfigured
+/// upstream, and materializing it would exhaust server memory.
+const MAX_RESPONSE_BODY: usize = 2 * 1024 * 1024;
+
+const BODY_TOO_LARGE: &str = "response body exceeds 2 MiB size limit";
+
+/// Read the full response body with a hard size cap (and an early
+/// `Content-Length` check), so a rogue upstream cannot OOM the server via
+/// an infinite or multi-gigabyte stream. Consumes the response; call
+/// [`check_response`] first if status/headers still need validating.
+pub async fn read_body(resp: wreq::Response, engine: &'static str) -> Result<Vec<u8>> {
+    use futures::StreamExt;
+    if resp
+        .content_length()
+        .is_some_and(|len| len as usize > MAX_RESPONSE_BODY)
+    {
+        return Err(Error::schema(engine, BODY_TOO_LARGE));
+    }
+    let mut out: Vec<u8> = Vec::new();
+    let mut stream = resp.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|_| Error::internal(engine, "failed to read response body"))?;
+        if out.len() + chunk.len() > MAX_RESPONSE_BODY {
+            return Err(Error::schema(engine, BODY_TOO_LARGE));
+        }
+        out.extend_from_slice(&chunk);
+    }
+    Ok(out)
+}
+
 /// True when a stored fixture is a real, parseable SERP snapshot rather than
 /// a transient anti-bot or error page. `fetch_fixtures` decides this at
 /// capture time by actually parsing the body (content validation) and records
@@ -220,10 +251,7 @@ pub async fn ddg_vqd(ctx: &EngineContext<'_>, query: &str) -> Result<String> {
     }
     let url = parse::with_query("https://duckduckgo.com/", [("q", query)]);
     let resp = ctx.client.get(&url).await?;
-    let body = resp
-        .bytes()
-        .await
-        .map_err(|_| Error::network("duckduckgo"))?;
+    let body = read_body(resp, "duckduckgo").await?;
     let text = String::from_utf8_lossy(&body);
     let vqd = extract_vqd(&text)
         .ok_or_else(|| Error::blocked("duckduckgo", BlockDetails::BotDetection))?;

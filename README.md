@@ -73,6 +73,10 @@ phrona.suggest("rus")
 
 Requires CPython <= 3.13 (pyo3 0.29).
 
+Pre-built wheels from the release workflow are Linux x86_64 only; on other
+platforms (macOS, Windows, aarch64) build from source with `uv build` /
+maturin, which needs a Rust toolchain.
+
 ## Quick start (MCP)
 
 ```bash

@@ -214,6 +214,18 @@ async fn run_serve(args: &args::ServeArgs, cfg: &PhronaConfig) -> anyhow::Result
         .clone()
         .unwrap_or_else(|| cfg.server.mcp_addr.clone());
 
+    // One shared shutdown trigger: SIGTERM/Ctrl+C fans out to the REST
+    // server (graceful drain), the MCP TCP server (accept-loop stop + drain
+    // window) and the select arms below.
+    let shutdown = std::sync::Arc::new(tokio::sync::Notify::new());
+    {
+        let shutdown = shutdown.clone();
+        tokio::spawn(async move {
+            phrona_api::shutdown_signal().await;
+            shutdown.notify_waiters();
+        });
+    }
+
     let rest_fut = async {
         if !args.no_rest {
             phrona_api::serve(rest_addr, cfg.clone()).await?;
@@ -224,7 +236,7 @@ async fn run_serve(args: &args::ServeArgs, cfg: &PhronaConfig) -> anyhow::Result
         if !args.no_mcp {
             let listener = phrona_mcp::tcp_listener(&mcp_addr).await?;
             tracing::info!("phrona-mcp listening on tcp://{mcp_addr} (newline-delimited JSON-RPC)");
-            phrona_mcp::serve_tcp(listener, cfg.clone()).await?;
+            phrona_mcp::serve_tcp(listener, cfg.clone(), shutdown.clone()).await?;
         }
         anyhow::Ok(())
     };
@@ -239,21 +251,21 @@ async fn run_serve(args: &args::ServeArgs, cfg: &PhronaConfig) -> anyhow::Result
                 biased;
                 r = rest_fut => r?,
                 m = mcp_fut => m?,
-                _ = phrona_api::shutdown_signal() => {}
+                _ = shutdown.notified() => {}
             }
         }
         (true, false) => {
             tokio::select! {
                 biased;
                 r = rest_fut => r?,
-                _ = phrona_api::shutdown_signal() => {}
+                _ = shutdown.notified() => {}
             }
         }
         (false, true) => {
             tokio::select! {
                 biased;
                 m = mcp_fut => m?,
-                _ = phrona_api::shutdown_signal() => {}
+                _ = shutdown.notified() => {}
             }
         }
         (false, false) => {

@@ -42,9 +42,28 @@ impl EngineShared {
     }
 
     pub fn vqd_set(&self, key: &str, value: String) {
-        self.vqd
-            .write()
-            .insert(key.to_string(), (Instant::now(), value));
+        let mut m = self.vqd.write();
+        // Bounded memory: under arbitrary queries the per-query token cache
+        // would otherwise grow forever in long-running services. Once it
+        // exceeds a threshold, drop expired entries; if still full, evict
+        // the oldest token to make room.
+        const VQD_CACHE_LIMIT: usize = 10_000;
+        if m.len() >= VQD_CACHE_LIMIT {
+            m.retain(|_, (at, _)| at.elapsed() < CACHE_TTL);
+            if m.len() >= VQD_CACHE_LIMIT {
+                // Deterministic eviction: oldest timestamp first, key as
+                // tie-breaker (tokens fetched in a tight loop share an
+                // Instant). Guarantees a bounded map with stable behavior.
+                if let Some(oldest_key) = m
+                    .iter()
+                    .min_by(|(k1, (at1, _)), (k2, (at2, _))| (at1, k1).cmp(&(at2, k2)))
+                    .map(|(k, _)| k.clone())
+                {
+                    m.remove(&oldest_key);
+                }
+            }
+        }
+        m.insert(key.to_string(), (Instant::now(), value));
     }
 
     pub fn sc_get(&self) -> Option<String> {
@@ -132,5 +151,34 @@ pub fn resolve(opts: &SearchOptions, category: Category) -> Vec<&'static dyn Eng
         all.into_iter()
             .filter(|e| wanted.iter().any(|w| w == e.name()))
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn vqd_cache_is_bounded() {
+        let shared = EngineShared::new();
+        for i in 0..10_100 {
+            shared.vqd_set(&format!("query-{i}"), format!("token-{i}"));
+        }
+        let len = shared.vqd.read().len();
+        assert!(len <= 10_000, "cache grew to {len} entries");
+        // the freshest entry is always present and readable
+        assert_eq!(
+            shared.vqd_get("query-10099"),
+            Some("token-10099".to_string())
+        );
+    }
+
+    #[test]
+    fn vqd_get_respects_ttl() {
+        let shared = EngineShared::new();
+        shared.vqd_set("k", "v".into());
+        // an entry stamped in the past is treated as expired
+        shared.vqd.write().get_mut("k").unwrap().0 = Instant::now() - CACHE_TTL * 2;
+        assert_eq!(shared.vqd_get("k"), None);
     }
 }

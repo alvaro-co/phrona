@@ -112,7 +112,9 @@ async fn fetch(
         &resp,
         crate::engines::util::MediaType::Any,
     )?;
-    Ok(resp.bytes().await.map_err(Error::from)?.to_vec())
+    Ok(crate::engines::util::read_body(resp, source.name())
+        .await?
+        .to_vec())
 }
 
 /// Parse an autocomplete response body for a source. Pure function so

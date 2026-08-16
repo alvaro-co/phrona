@@ -514,9 +514,20 @@ mod tests {
         assert!(default_user_agent(Profile::OkHttp).starts_with("okhttp/"));
         let r1 = default_user_agent(Profile::Random);
         let r2 = default_user_agent(Profile::Random);
-        assert_ne!(r1, r2, "random UA rotates per call, not cached once");
+        // Deterministic stand-in for "rotates per call": across 8 draws a
+        // 5-entry pool can only collide 8 times in a row with negligible
+        // probability (1/5^7), so at least two distinct UAs must appear.
+        let mut draws = std::collections::HashSet::new();
+        for _ in 0..8 {
+            draws.insert(default_user_agent(Profile::Random));
+        }
+        assert!(
+            draws.len() >= 2,
+            "random UA rotates per call, not cached once"
+        );
         assert!(UA_POOL.contains(&r1));
         assert!(UA_POOL.contains(&r2));
+        assert!(draws.iter().all(|ua| UA_POOL.contains(ua)));
     }
 
     #[test]
@@ -558,5 +569,17 @@ mod tests {
                 ..
             }))
         ));
+    }
+
+    #[test]
+    fn uri_schemes_are_normalized_to_lowercase() {
+        // URI schemes are case-insensitive per RFC 3986; both the `http`
+        // and `url` crates normalize them at parse time, so the SSRF scheme
+        // check in validate_target sees canonical lowercase. This guards
+        // against a regression where mixed-case schemes leak through.
+        let uri = "HTTP://Example.COM/a".parse::<wreq::Uri>().unwrap();
+        assert_eq!(uri.scheme_str(), Some("http"));
+        let url = "HtTpS://example.com/a".parse::<url::Url>().unwrap();
+        assert_eq!(url.scheme(), "https");
     }
 }

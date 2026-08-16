@@ -4,6 +4,8 @@
 //! Tools are compartmentalized per capability: per-category search,
 //! suggestions, page extraction and grounded search for RAG.
 
+use std::time::Duration;
+
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::tool_router;
 use rmcp::transport::stdio;
@@ -358,22 +360,39 @@ pub async fn run_stdio(cfg: &PhronaConfig) -> anyhow::Result<()> {
 
 /// Serve the MCP server over a TCP listener (newline-delimited JSON-RPC,
 /// the same framing as stdio). Each connection is served in its own task.
-/// Blocks until the listener is closed.
-pub async fn serve_tcp(listener: tokio::net::TcpListener, cfg: PhronaConfig) -> anyhow::Result<()> {
+/// `shutdown` fires on SIGTERM/Ctrl+C: the accept loop stops and in-flight
+/// connections get a short grace window to drain before the process exits.
+/// Blocks until the listener is closed or shutdown fires.
+pub async fn serve_tcp(
+    listener: tokio::net::TcpListener,
+    cfg: PhronaConfig,
+    shutdown: std::sync::Arc<tokio::sync::Notify>,
+) -> anyhow::Result<()> {
     tracing::info!("phrona-mcp listening on {}", listener.local_addr()?);
+    let mut conns: tokio::task::JoinSet<()> = tokio::task::JoinSet::new();
     loop {
-        let (socket, _) = listener.accept().await?;
-        let cfg = cfg.clone();
-        tokio::spawn(async move {
-            let service = PhronaMcp::with_config(&cfg);
-            match service.serve(socket).await {
-                Ok(server) => {
-                    let _ = server.waiting().await;
-                }
-                Err(e) => tracing::debug!("mcp connection failed: {e}"),
+        tokio::select! {
+            _ = shutdown.notified() => break,
+            accepted = listener.accept() => {
+                let (socket, _) = accepted?;
+                let cfg = cfg.clone();
+                conns.spawn(async move {
+                    let service = PhronaMcp::with_config(&cfg);
+                    match service.serve(socket).await {
+                        Ok(server) => {
+                            let _ = server.waiting().await;
+                        }
+                        Err(e) => tracing::debug!("mcp connection failed: {e}"),
+                    }
+                });
             }
-        });
+        }
     }
+    // Grace window for in-flight requests; the rest are aborted with the
+    // process when the runtime shuts down.
+    let drain = tokio::time::timeout(Duration::from_secs(2), conns.join_all());
+    let _ = drain.await;
+    Ok(())
 }
 
 /// Build a TCP listener from an addr string (e.g. "127.0.0.1:8081").
