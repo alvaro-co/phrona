@@ -2,18 +2,24 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use futures::stream::{FuturesUnordered, StreamExt};
+use tokio::sync::Semaphore;
 
-use crate::client::{HttpClient, Profile};
+use crate::client::{HttpClient, Profile, ProxyPool};
 use crate::dedup::{GroupedResult, group};
 use crate::engine::{EngineContext, EngineShared, resolve};
 use crate::error::{Error, Result};
 use crate::models::{Category, EngineReport, RawResult, ResultItem, SearchResponse, WebResult};
 use crate::options::SearchOptions;
-use crate::rank::rank;
+use crate::rank::{calculate_score, query_terms, rank};
 
-/// High-level search client. Shares one HTTP client across engines.
+/// Maximum number of simultaneous outbound engine requests per search.
+const MAX_CONCURRENT_ENGINES: usize = 8;
+
+/// High-level search client. Shares a persistent pool of impersonated HTTP
+/// clients (one per proxy) across engines; each engine task is pinned to one
+/// client so multi-step flows keep the same proxy and cookie jar.
 pub struct SearchClient {
-    http: HttpClient,
+    pool: ProxyPool,
     shared: Arc<EngineShared>,
 }
 
@@ -28,31 +34,32 @@ impl SearchClient {
         timeout: Option<std::time::Duration>,
         proxies: Option<Vec<String>>,
     ) -> Result<Self> {
-        let mut b = HttpClient::builder().profile(profile);
-        if let Some(t) = timeout {
-            b = b.timeout(t);
-        }
-        if let Some(proxies) = proxies {
-            b = b.proxy(proxies.into_iter().next());
-        }
+        let timeout = timeout.unwrap_or_else(|| std::time::Duration::from_secs(10));
+        let pool = ProxyPool::new(proxies.unwrap_or_default(), profile, timeout)?;
         Ok(Self {
-            http: b.build()?,
+            pool,
             shared: Arc::new(EngineShared::new()),
         })
     }
 
+    /// The first (or only) pooled client — used by non-engine flows such as
+    /// `extract` and `suggest`.
     pub fn http(&self) -> &HttpClient {
-        &self.http
+        self.pool.first()
     }
 
     /// Run a search across all enabled engines for the category.
     ///
-    /// Engines run concurrently (`FuturesUnordered`) under a single adaptive
+    /// Each engine task is assigned one sticky `HttpClient` from the proxy
+    /// pool, and runs under a [`Semaphore`] limiting concurrency to
+    /// [`MAX_CONCURRENT_ENGINES`] simultaneous outbound requests. Engines
+    /// run concurrently (`FuturesUnordered`) under a single adaptive
     /// deadline (`opts.timeout`). As soon as the merged result set reaches
     /// `opts.max_results` the remaining in-flight engine futures are dropped
-    /// (cancelled) and we return early. An engine that returns an `Ok` — even
-    /// with zero results — counts as a success; an error is only raised when
-    /// every engine failed.
+    /// (cancelled) and we return early. An engine that returns an `Ok` —
+    /// even with zero results — counts as a success; an error is only raised
+    /// when every engine failed. On page 1 of Web searches, suggestions are
+    /// fetched in parallel with the scraping via `tokio::join!`.
     pub async fn search(&self, opts: SearchOptions) -> Result<SearchResponse> {
         let started = Instant::now();
         let deadline = started + opts.timeout;
@@ -66,73 +73,100 @@ impl SearchClient {
             ));
         }
 
-        let mut answers: Vec<RawResult> = Vec::new();
-        let mut raw: Vec<RawResult> = Vec::new();
-        let mut reports: Vec<EngineReport> = Vec::new();
-        let mut any_ok = false;
+        let sem = Arc::new(Semaphore::new(MAX_CONCURRENT_ENGINES));
 
         let futs = engines.iter().map(|engine| {
-            let ctx = EngineContext {
-                client: &self.http,
-                opts: &opts,
-                shared: &self.shared,
-            };
+            let client = self.pool.get_client();
+            let shared = Arc::clone(&self.shared);
+            let sem = Arc::clone(&sem);
+            let opts = &opts;
             async move {
+                let ctx = EngineContext {
+                    client,
+                    opts,
+                    shared: &shared,
+                };
+                let _permit = sem.acquire().await.expect("semaphore closed");
                 let r = engine.search(&ctx).await;
                 (engine.name(), r)
             }
         });
         let mut in_flight = FuturesUnordered::from_iter(futs);
 
-        while let Some((name, result)) = in_flight.next().await {
-            if Instant::now() >= deadline {
-                drop(in_flight);
-                break;
-            }
-            match result {
-                Ok(items) => {
-                    any_ok = true;
-                    if items.is_empty() {
+        let scrape = async move {
+            let mut answers: Vec<RawResult> = Vec::new();
+            let mut raw: Vec<RawResult> = Vec::new();
+            let mut reports: Vec<EngineReport> = Vec::new();
+            let mut any_ok = false;
+
+            while let Some((name, result)) = in_flight.next().await {
+                if Instant::now() >= deadline {
+                    drop(in_flight);
+                    break;
+                }
+                match result {
+                    Ok(items) => {
+                        any_ok = true;
+                        if items.is_empty() {
+                            reports.push(EngineReport {
+                                name: name.to_string(),
+                                status: "empty".into(),
+                                results: 0,
+                                error: None,
+                                scope: None,
+                                kind: None,
+                            });
+                            continue;
+                        }
+                        let n = items.len();
+                        let (answers_part, raw_part): (Vec<_>, Vec<_>) =
+                            items.into_iter().partition(|r| r.url.is_empty());
+                        answers.extend(answers_part);
+                        raw.extend(raw_part);
                         reports.push(EngineReport {
                             name: name.to_string(),
-                            status: "empty".into(),
-                            results: 0,
+                            status: "ok".into(),
+                            results: n,
                             error: None,
                             scope: None,
                             kind: None,
                         });
-                        continue;
                     }
-                    let n = items.len();
-                    let (answers_part, raw_part): (Vec<_>, Vec<_>) =
-                        items.into_iter().partition(|r| r.url.is_empty());
-                    answers.extend(answers_part);
-                    raw.extend(raw_part);
-                    reports.push(EngineReport {
-                        name: name.to_string(),
-                        status: "ok".into(),
-                        results: n,
-                        error: None,
-                        scope: None,
-                        kind: None,
-                    });
+                    Err(e) => {
+                        reports.push(EngineReport {
+                            name: name.to_string(),
+                            status: "error".into(),
+                            results: 0,
+                            error: Some(e.to_string()),
+                            scope: Some(format!("{:?}", e.scope())),
+                            kind: Some(format!("{:?}", e.kind())),
+                        });
+                    }
                 }
-                Err(e) => {
-                    reports.push(EngineReport {
-                        name: name.to_string(),
-                        status: "error".into(),
-                        results: 0,
-                        error: Some(e.to_string()),
-                        scope: Some(format!("{:?}", e.scope())),
-                        kind: Some(format!("{:?}", e.kind())),
-                    });
+                if raw.len() >= max_results {
+                    drop(in_flight);
+                    break;
                 }
             }
-            if raw.len() >= max_results {
-                drop(in_flight);
-                break;
+            (raw, answers, reports, any_ok)
+        };
+
+        let suggestions = async {
+            if category == Category::Web && opts.page == 1 {
+                let client = self.pool.get_client();
+                crate::engines::suggest::suggest_all(client, &opts.query, &opts.region_param())
+                    .await
+                    .into_iter()
+                    .flat_map(|(_, s)| s)
+                    .filter(|s| !s.is_empty())
+                    .take(10)
+                    .collect()
+            } else {
+                Vec::new()
             }
-        }
+        };
+
+        let ((raw, answers, reports, any_ok), suggestions) = tokio::join!(scrape, suggestions);
 
         if !any_ok {
             let details = reports
@@ -149,8 +183,11 @@ impl SearchClient {
 
         let groups = group(raw);
         let ranked = rank(groups, &opts.query);
+        let terms = query_terms(&opts.query);
         let mut results: Vec<ResultItem> = Vec::new();
-        for (score, g) in ranked.into_iter() {
+        for (_, g) in ranked.into_iter() {
+            // unified cross-category score, normalized to (0.001, 1.000)
+            let score = calculate_score(&g, &terms);
             let item = to_result_item(g, score, results.len());
             if let Some(item) = item {
                 results.push(item);
@@ -159,18 +196,6 @@ impl SearchClient {
                 break;
             }
         }
-
-        let suggestions = if category == Category::Web && opts.page == 1 {
-            crate::engines::suggest::suggest_all(&self.http, &opts.query, &opts.region_param())
-                .await
-                .into_iter()
-                .flat_map(|(_, s)| s)
-                .filter(|s| !s.is_empty())
-                .take(10)
-                .collect()
-        } else {
-            Vec::new()
-        };
 
         Ok(SearchResponse {
             query: opts.query.clone(),
@@ -224,6 +249,7 @@ pub fn to_result_item(g: GroupedResult, score: f64, idx: usize) -> Option<Result
             source: raw.source,
             engines: g.engines,
             position,
+            score,
         })),
         Category::News => Some(ResultItem::News(crate::models::NewsResult {
             title: raw.title,
@@ -234,6 +260,7 @@ pub fn to_result_item(g: GroupedResult, score: f64, idx: usize) -> Option<Result
             image_url: raw.image_url,
             engines: g.engines,
             position,
+            score,
         })),
         Category::Videos => Some(ResultItem::Video(crate::models::VideoResult {
             title: raw.title,
@@ -246,6 +273,7 @@ pub fn to_result_item(g: GroupedResult, score: f64, idx: usize) -> Option<Result
             thumbnail_url: raw.thumbnail_url,
             engines: g.engines,
             position,
+            score,
         })),
         Category::Books => Some(ResultItem::Book(crate::models::BookResult {
             title: raw.title,
@@ -256,6 +284,7 @@ pub fn to_result_item(g: GroupedResult, score: f64, idx: usize) -> Option<Result
             thumbnail_url: raw.thumbnail_url,
             engines: g.engines,
             position,
+            score,
         })),
     }
 }

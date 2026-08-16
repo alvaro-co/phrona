@@ -132,6 +132,7 @@ pub struct ImageResult {
     pub source: String,
     pub engines: Vec<String>,
     pub position: usize,
+    pub score: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -144,6 +145,7 @@ pub struct NewsResult {
     pub image_url: String,
     pub engines: Vec<String>,
     pub position: usize,
+    pub score: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -158,6 +160,7 @@ pub struct VideoResult {
     pub thumbnail_url: String,
     pub engines: Vec<String>,
     pub position: usize,
+    pub score: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -170,6 +173,7 @@ pub struct BookResult {
     pub thumbnail_url: String,
     pub engines: Vec<String>,
     pub position: usize,
+    pub score: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

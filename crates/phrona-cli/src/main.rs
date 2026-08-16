@@ -398,6 +398,7 @@ mod tests {
                     source: "".into(),
                     engines: vec!["bing_images".into()],
                     position: 2,
+                    score: 0.95,
                 }),
             ],
             suggestions: vec![],
