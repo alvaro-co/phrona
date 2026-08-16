@@ -7,12 +7,23 @@
 //! phrona.extract("https://doc.rust-lang.org/book/")
 //! ```
 
+use std::sync::LazyLock;
 use std::time::Duration;
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
 use phrona_core::{Category, Profile, SearchClient, SearchOptions};
+
+/// Dedicated multi-threaded runtime for all blocking calls. Network I/O runs
+/// on this runtime with the Python GIL released, so Python threads and
+/// asyncio loops are never blocked.
+static RUNTIME: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| {
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("tokio runtime")
+});
 
 fn parse_profile(s: &str) -> PyResult<Profile> {
     let name = s.trim().to_ascii_lowercase();
@@ -109,6 +120,7 @@ impl Client {
     #[allow(clippy::too_many_arguments)]
     fn search(
         &self,
+        py: Python<'_>,
         query: &str,
         category: &str,
         engines: Option<Vec<String>>,
@@ -138,77 +150,105 @@ impl Client {
             })
             .transpose()?;
         opts.filters = filters;
-        let resp = self
-            .client
-            .search_sync(opts)
-            .map_err(|e| PyValueError::new_err(e.to_string()))?;
+        let resp = py
+            .allow_threads(|| {
+                RUNTIME
+                    .block_on(self.client.search(opts))
+                    .map_err(|e| e.to_string())
+            })
+            .map_err(PyValueError::new_err)?;
         to_py(&resp)
     }
 
     /// Query suggestions. source: duckduckgo, google, bing, brave, startpage,
     /// qwant or wikipedia. None returns all sources.
     #[pyo3(signature = (query, source=None, region="us-en"))]
-    fn suggest(&self, query: &str, source: Option<String>, region: &str) -> PyResult<PyObject> {
+    fn suggest(
+        &self,
+        py: Python<'_>,
+        query: &str,
+        source: Option<String>,
+        region: &str,
+    ) -> PyResult<PyObject> {
         let http = self.client.http();
-        let value = match source {
-            Some(name) => {
-                let s = phrona_core::SuggestSource::from_name(&name).ok_or_else(|| {
-                    PyValueError::new_err(format!(
-                        "unknown source '{name}', expected one of: {}",
-                        phrona_core::SuggestSource::ALL
-                            .iter()
-                            .map(|s| s.name())
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    ))
-                })?;
-                let list =
-                    phrona_core::search::block_on(phrona_core::suggest(http, s, query, region))
-                        .map_err(|e| PyValueError::new_err(e.to_string()))?;
-                serde_json::json!({"query": query, "source": name, "suggestions": list})
-            }
-            None => {
-                let all =
-                    phrona_core::search::block_on(phrona_core::suggest_all(http, query, region));
-                let map: serde_json::Map<String, serde_json::Value> = all
-                    .into_iter()
-                    .map(|(s, list)| (s.name().to_string(), serde_json::json!(list)))
-                    .collect();
-                serde_json::json!({"query": query, "suggestions": map})
-            }
-        };
+        let value = py
+            .allow_threads(|| -> Result<serde_json::Value, String> {
+                match source {
+                    Some(name) => {
+                        let s = phrona_core::SuggestSource::from_name(&name).ok_or_else(|| {
+                            format!(
+                                "unknown source '{name}', expected one of: {}",
+                                phrona_core::SuggestSource::ALL
+                                    .iter()
+                                    .map(|s| s.name())
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            )
+                        })?;
+                        let list = RUNTIME
+                            .block_on(phrona_core::suggest(http, s, query, region))
+                            .map_err(|e| e.to_string())?;
+                        Ok(serde_json::json!({"query": query, "source": name, "suggestions": list}))
+                    }
+                    None => {
+                        let all = RUNTIME.block_on(phrona_core::suggest_all(http, query, region));
+                        let map: serde_json::Map<String, serde_json::Value> = all
+                            .into_iter()
+                            .map(|(s, list)| (s.name().to_string(), serde_json::json!(list)))
+                            .collect();
+                        Ok(serde_json::json!({"query": query, "suggestions": map}))
+                    }
+                }
+            })
+            .map_err(PyValueError::new_err)?;
         to_py(&value)
     }
 
     /// Fetch a URL and extract its readable main content (AI grounding).
     #[pyo3(signature = (url, max_chars=8000, query=None))]
-    fn extract(&self, url: &str, max_chars: usize, query: Option<&str>) -> PyResult<PyObject> {
-        let page = phrona_core::search::block_on(phrona_core::extract(
-            self.client.http(),
-            url,
-            max_chars,
-            query,
-        ))
-        .map_err(|e| PyValueError::new_err(e.to_string()))?;
+    fn extract(
+        &self,
+        py: Python<'_>,
+        url: &str,
+        max_chars: usize,
+        query: Option<&str>,
+    ) -> PyResult<PyObject> {
+        let page = py
+            .allow_threads(|| {
+                RUNTIME
+                    .block_on(phrona_core::extract(
+                        self.client.http(),
+                        url,
+                        max_chars,
+                        query,
+                    ))
+                    .map_err(|e| e.to_string())
+            })
+            .map_err(PyValueError::new_err)?;
         to_py(&page)
     }
 
     /// List available engines per category.
     #[pyo3(signature = (category=None))]
-    fn engines(&self, category: Option<String>) -> PyResult<PyObject> {
-        let mut out = serde_json::Map::new();
-        let cats: Vec<Category> = match category {
-            Some(c) => vec![parse_category(&c)?],
-            None => Category::ALL.to_vec(),
-        };
-        for cat in cats {
-            let names: Vec<String> = phrona_core::available_engines(cat)
-                .iter()
-                .map(|e| e.name.clone())
-                .collect();
-            out.insert(cat.as_str().to_string(), serde_json::json!(names));
-        }
-        to_py(&serde_json::Value::Object(out))
+    fn engines(&self, py: Python<'_>, category: Option<String>) -> PyResult<PyObject> {
+        let out = py.allow_threads(|| {
+            RUNTIME.block_on(async {
+                let mut out = serde_json::Map::new();
+                let cats: Vec<Category> = match category {
+                    Some(c) => vec![parse_category(&c)?],
+                    None => Category::ALL.to_vec(),
+                };
+                for cat in cats {
+                    let names: Vec<String> = phrona_core::available_engines(cat)
+                        .iter()
+                        .map(|e| e.name.clone())
+                        .collect();
+                    out.insert(cat.as_str().to_string(), serde_json::json!(names));
+                }
+                Ok::<_, PyErr>(serde_json::Value::Object(out))
+            })
+        });
+        to_py(&out?)
     }
 }
 
@@ -223,6 +263,7 @@ fn build_client(profile: &str, timeout: f64) -> PyResult<Client> {
                     time_range=None, filters=None, profile="chrome", timeout=15.0))]
 #[allow(clippy::too_many_arguments)]
 fn search(
+    py: Python<'_>,
     query: &str,
     category: &str,
     engines: Option<Vec<String>>,
@@ -238,6 +279,7 @@ fn search(
 ) -> PyResult<PyObject> {
     let client = build_client(profile, timeout)?;
     client.search(
+        py,
         query,
         category,
         engines,
@@ -254,22 +296,27 @@ fn search(
 /// One-shot suggestions with a default client.
 #[pyfunction]
 #[pyo3(signature = (query, source=None, region="us-en"))]
-fn suggest(query: &str, source: Option<String>, region: &str) -> PyResult<PyObject> {
-    build_client("chrome", 15.0)?.suggest(query, source, region)
+fn suggest(
+    py: Python<'_>,
+    query: &str,
+    source: Option<String>,
+    region: &str,
+) -> PyResult<PyObject> {
+    build_client("chrome", 15.0)?.suggest(py, query, source, region)
 }
 
 /// One-shot page extraction with a default client.
 #[pyfunction]
 #[pyo3(signature = (url, max_chars=8000, query=None))]
-fn extract(url: &str, max_chars: usize, query: Option<&str>) -> PyResult<PyObject> {
-    build_client("chrome", 15.0)?.extract(url, max_chars, query)
+fn extract(py: Python<'_>, url: &str, max_chars: usize, query: Option<&str>) -> PyResult<PyObject> {
+    build_client("chrome", 15.0)?.extract(py, url, max_chars, query)
 }
 
 /// One-shot engines listing with a default client.
 #[pyfunction]
 #[pyo3(signature = (category=None))]
-fn engines(category: Option<String>) -> PyResult<PyObject> {
-    build_client("chrome", 15.0)?.engines(category)
+fn engines(py: Python<'_>, category: Option<String>) -> PyResult<PyObject> {
+    build_client("chrome", 15.0)?.engines(py, category)
 }
 
 #[pyfunction]

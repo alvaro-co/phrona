@@ -185,9 +185,18 @@ impl SearchClient {
         })
     }
 
-    /// Blocking API. Works both from plain threads and from inside a tokio
-    /// runtime (uses the ambient runtime when present).
+    /// Blocking API for use from plain (non-tokio) threads.
+    ///
+    /// Calling this from inside an active Tokio runtime would deadlock or
+    /// panic (`block_on` inside a worker thread), so it refuses and asks the
+    /// caller to use the async [`SearchClient::search`] instead.
     pub fn search_sync(&self, opts: SearchOptions) -> Result<SearchResponse> {
+        if tokio::runtime::Handle::try_current().is_ok() {
+            return Err(Error::internal(
+                "search",
+                "search_sync cannot be called from within an active Tokio runtime thread pool; use async search().await instead",
+            ));
+        }
         block_on(self.search(opts))
     }
 }
@@ -294,6 +303,7 @@ mod tests {
     use crate::models::RawResult;
     use crate::models::ResultItem;
     use crate::search::to_result_item;
+    use crate::{SearchClient, SearchOptions};
 
     fn raw(title: &str, url: &str) -> RawResult {
         RawResult {
@@ -324,6 +334,19 @@ mod tests {
             crate::dedup::dedup_key(&items[1].url),
             "https://example.com/a"
         );
+    }
+
+    #[test]
+    fn search_sync_refuses_inside_active_runtime() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let client = SearchClient::new().unwrap();
+            let err = client.search_sync(SearchOptions::new("x")).unwrap_err();
+            assert!(
+                err.to_string().contains("search_sync cannot be called"),
+                "got: {err}"
+            );
+        });
     }
 
     #[test]
