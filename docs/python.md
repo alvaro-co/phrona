@@ -8,7 +8,7 @@ interpreter).
 
 ```bash
 uv build                       # needs [build-system] setuptools-rust in pyproject.toml
-uv pip install dist/phrona-0.1.0-*.whl --python <python3.12 venv>
+uv pip install dist/phrona-*.whl --python <python3.12 venv>
 ```
 
 The wheel tags the platform (`cp312-cp312-linux_x86_64` etc.). On other

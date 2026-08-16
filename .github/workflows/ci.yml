@@ -68,5 +68,5 @@ jobs:
       - name: Install and import-check the wheel
         run: |
           uv venv --python 3.12 /tmp/msenv
-          uv pip install --python /tmp/msenv/bin/python dist/phrona-0.1.0-*.whl
+          uv pip install --python /tmp/msenv/bin/python dist/phrona-*.whl
           /tmp/msenv/bin/python -c "import phrona; print(phrona.version())"

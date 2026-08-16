@@ -33,7 +33,7 @@ cargo run -p phrona-examples --bin ground -- "rust ownership"
 ```bash
 uv build
 uv venv --python 3.12 /tmp/msenv
-uv pip install --python /tmp/msenv/bin/python dist/phrona-0.1.0-*.whl
+uv pip install --python /tmp/msenv/bin/python dist/phrona-*.whl
 /tmp/msenv/bin/python examples/python/basic.py "rust programming"
 /tmp/msenv/bin/python examples/python/client.py "rust ownership"
 ```

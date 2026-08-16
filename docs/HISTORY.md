@@ -160,7 +160,7 @@ never get polluted and parser tests skip non-SERP captures gracefully.
   the same JSON conversion path.
 - Wheel packaging: workspace `pyproject.toml` with setuptools-rust,
   `[[tool.setuptools-rust.ext-modules]]` keyed by target name; verified
-  with `uv build` -> `dist/phrona-0.1.0-cp312-cp312-linux_x86_64.whl`
+  with `uv build` -> `dist/phrona-*.whl`
   -> fresh venv install -> all functions called successfully.
 - Verified quirk: pyo3 0.24 segfaults on CPython 3.14; Python <= 3.13
   only.

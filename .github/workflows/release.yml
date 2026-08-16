@@ -181,7 +181,9 @@ jobs:
   publish-crates:
     name: publish crates.io
     needs: [build]
-    if: ${{ secrets.CARGO_REGISTRY_TOKEN != '' }}
+    if: ${{ env.CARGO_REGISTRY_TOKEN != '' }}
+    env:
+      CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -191,15 +193,18 @@ jobs:
           rustup default stable
       - name: Publish phrona, then its dependents
         run: |
-          cargo publish --allow-dirty --token "${{ secrets.CARGO_REGISTRY_TOKEN }}" -p phrona
-          cargo publish --allow-dirty --token "${{ secrets.CARGO_REGISTRY_TOKEN }}" -p phrona-api
-          cargo publish --allow-dirty --token "${{ secrets.CARGO_REGISTRY_TOKEN }}" -p phrona-mcp
-          cargo publish --allow-dirty --token "${{ secrets.CARGO_REGISTRY_TOKEN }}" -p phrona-cli
+          cargo publish --allow-dirty --token "$CARGO_REGISTRY_TOKEN" -p phrona
+          cargo publish --allow-dirty --token "$CARGO_REGISTRY_TOKEN" -p phrona-api
+          cargo publish --allow-dirty --token "$CARGO_REGISTRY_TOKEN" -p phrona-mcp
+          cargo publish --allow-dirty --token "$CARGO_REGISTRY_TOKEN" -p phrona-cli
+          cargo publish --allow-dirty --token "$CARGO_REGISTRY_TOKEN" -p phrona-python
 
   publish-pypi:
     name: publish PyPI
     needs: [sdist, wheel]
-    if: ${{ secrets.PYPI_TOKEN != '' }}
+    if: ${{ env.PYPI_TOKEN != '' }}
+    env:
+      PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
@@ -209,5 +214,5 @@ jobs:
       - name: Publish wheels and sdist to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          password: ${{ secrets.PYPI_TOKEN }}
+          password: ${{ env.PYPI_TOKEN }}
 
