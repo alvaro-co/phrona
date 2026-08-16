@@ -9,7 +9,7 @@
 //!
 //! Load a configuration with [`PhronaConfig::load`]; parse raw YAML with
 //! [`PhronaConfig::from_yaml_str`]. Every field has a default, so partial
-//! files and `phrona.example.yaml`-style snippets are valid.
+//! files and `phrona.yaml`-style snippets are valid.
 
 use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
@@ -667,7 +667,7 @@ engines:
         let path = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("..")
             .join("..")
-            .join("phrona.example.yaml");
+            .join("phrona.yaml");
         let cfg = PhronaConfig::load_from_file(&path).unwrap();
         let defaults = PhronaConfig::defaults();
         assert_eq!(cfg.server.bind_addr, defaults.server.bind_addr);

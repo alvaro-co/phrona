@@ -1,7 +1,7 @@
-# phrona.example.yaml — typed configuration for all Phrona surfaces.
+# phrona.yaml — typed configuration for all Phrona surfaces.
 #
-# Copy to `phrona.yaml` (or point $PHRONA_CONFIG_PATH at it) to use it.
 # Every key is optional: absent keys fall back to the defaults below.
+# Override the file itself with $PHRONA_CONFIG_PATH (default: ./phrona.yaml).
 #
 # Precedence (highest wins):
 #   1. Environment variables (PHRONA_SERVER_BIND_ADDR, PHRONA_API_KEY, ...)
@@ -15,6 +15,7 @@
 #   PHRONA_API_KEY                    server.api_key (empty value clears it)
 #   PHRONA_RATE_LIMIT_PER_MINUTE      server.rate_limit_per_minute
 #   PHRONA_MAX_BODY_BYTES             server.max_body_bytes
+#   PHRONA_SERVER_TRUSTED_PROXIES     server.trusted_proxies (comma list)
 #   PHRONA_SEARCH_TIMEOUT_SECS        search.timeout_secs
 #   PHRONA_SEARCH_MAX_RESULTS_LIMIT   search.max_results_limit
 #   PHRONA_SEARCH_CONCURRENCY_LIMIT   search.concurrency_limit
