@@ -5,15 +5,18 @@
 use axum::body::Body;
 use axum::http::{Method, Request, StatusCode, header};
 use http_body_util::BodyExt;
+use phrona::PhronaConfig;
 use serde_json::Value;
 use tower::ServiceExt;
 
 fn key_router() -> axum::Router {
-    phrona_api::router(Some("test-secret".into()))
+    let mut cfg = PhronaConfig::defaults();
+    cfg.server.api_key = Some("test-secret".into());
+    phrona_api::router(cfg)
 }
 
 fn open_router() -> axum::Router {
-    phrona_api::router(None)
+    phrona_api::router(PhronaConfig::defaults())
 }
 
 async fn get(router: &axum::Router, path: &str) -> (StatusCode, Value, String) {

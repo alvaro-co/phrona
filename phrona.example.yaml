@@ -1,0 +1,68 @@
+# phonona.example.yaml — typed configuration for all Phrona surfaces.
+#
+# Copy to `phrona.yaml` (or point $PHRONA_CONFIG_PATH at it) to use it.
+# Every key is optional: absent keys fall back to the defaults below.
+#
+# Precedence (highest wins):
+#   1. Environment variables (PHRONA_SERVER_BIND_ADDR, PHRONA_API_KEY, ...)
+#   2. This file
+#   3. Built-in defaults
+#
+# Supported environment overrides:
+#   PHRONA_CONFIG_PATH                path to the YAML file itself
+#   PHRONA_SERVER_BIND_ADDR           server.bind_addr
+#   PHRONA_SERVER_MCP_ADDR            server.mcp_addr
+#   PHRONA_API_KEY                    server.api_key (empty value clears it)
+#   PHRONA_RATE_LIMIT_PER_MINUTE      server.rate_limit_per_minute
+#   PHRONA_MAX_BODY_BYTES             server.max_body_bytes
+#   PHRONA_SEARCH_TIMEOUT_SECS        search.timeout_secs
+#   PHRONA_SEARCH_MAX_RESULTS_LIMIT   search.max_results_limit
+#   PHRONA_SEARCH_CONCURRENCY_LIMIT   search.concurrency_limit
+#   PHRONA_SEARCH_CACHE_TTL_SECS      search.cache_ttl_secs
+#   PHRONA_SECURITY_BLOCK_PRIVATE_IPS security.block_private_ips (true/false)
+#   PHRONA_SECURITY_ALLOWED_DOMAINS   security.allowed_domains (comma list)
+#   PHRONA_SECURITY_DENIED_DOMAINS    security.denied_domains (comma list)
+#   PHRONA_ENGINES_PROXIES            engines.proxies (comma list)
+#   PHRONA_ENGINES_PROFILE            engines.profile
+
+server:
+  # REST API bind address (default: 127.0.0.1:8080)
+  bind_addr: 127.0.0.1:8080
+  # MCP-over-TCP bind address used by `phrona serve` (default: 127.0.0.1:8081)
+  mcp_addr: 127.0.0.1:8081
+  # API key required by REST/MCP clients; unset (or null) disables auth.
+  # Prefer the PHRONA_API_KEY environment variable over committing secrets.
+  api_key: null
+  # Fixed-window request cap for the search/suggest endpoints (default: 120).
+  # Set to 0 to disable rate limiting.
+  rate_limit_per_minute: 120
+  # Maximum accepted request body size in bytes (default: 2097152 = 2 MiB).
+  max_body_bytes: 2097152
+
+search:
+  # Overall deadline for a search, in seconds (default: 15).
+  timeout_secs: 15
+  # Upper bound applied to max_results clamps on every surface (default: 100).
+  max_results_limit: 100
+  # Maximum simultaneous outbound engine requests per search (default: 8).
+  concurrency_limit: 8
+  # TTL for engine-scoped token/state caches, in seconds (default: 3600).
+  cache_ttl_secs: 3600
+
+security:
+  # Block connections to private/loopback/link-local IP ranges (default: true).
+  # The core extractor always enforces IP safety.
+  block_private_ips: true
+  # Optional allow-list of hostnames for outbound requests (empty = all).
+  allowed_domains: []
+  # Optional deny-list of hostnames for outbound requests.
+  denied_domains: []
+
+engines:
+  # Proxy URLs; one impersonated HTTP client is pooled per proxy and used
+  # round-robin across engines (sticky per search). Empty = direct.
+  proxies: []
+  # Browser impersonation profile: chrome, chrome149, chrome140, chrome131,
+  # chrome120, chrome100, firefox, firefox139, firefox148, safari, safari26,
+  # edge, edge148, opera, opera131, okhttp, random (default: chrome).
+  profile: chrome

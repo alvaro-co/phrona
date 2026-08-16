@@ -1,6 +1,7 @@
 //! Phrona - a high-performance metasearch engine library.
 
 pub mod client;
+pub mod config;
 pub mod dedup;
 pub mod engine;
 pub mod engines;
@@ -13,6 +14,7 @@ pub mod rank;
 pub mod search;
 
 pub use client::{HttpClient, HttpClientBuilder, Profile};
+pub use config::{ConfigError, PhronaConfig};
 pub use error::{Error, Result};
 pub use extract::{ExtractedPage, extract, extract_from_html, extract_many, is_safe_ip};
 pub use models::*;

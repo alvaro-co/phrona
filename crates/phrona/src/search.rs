@@ -5,6 +5,7 @@ use futures::stream::{FuturesUnordered, StreamExt};
 use tokio::sync::Semaphore;
 
 use crate::client::{HttpClient, Profile, ProxyPool};
+use crate::config::PhronaConfig;
 use crate::dedup::{GroupedResult, group};
 use crate::engine::{EngineContext, EngineShared, resolve};
 use crate::error::{Error, Result};
@@ -12,7 +13,9 @@ use crate::models::{Category, EngineReport, RawResult, ResultItem, SearchRespons
 use crate::options::SearchOptions;
 use crate::rank::{calculate_score, query_terms, rank};
 
-/// Maximum number of simultaneous outbound engine requests per search.
+/// Default maximum number of simultaneous outbound engine requests per
+/// search (overridable via [`SearchClient::with_config`] /
+/// `search.concurrency_limit`).
 const MAX_CONCURRENT_ENGINES: usize = 8;
 
 /// High-level search client. Shares a persistent pool of impersonated HTTP
@@ -21,6 +24,7 @@ const MAX_CONCURRENT_ENGINES: usize = 8;
 pub struct SearchClient {
     pool: ProxyPool,
     shared: Arc<EngineShared>,
+    concurrency: usize,
 }
 
 impl SearchClient {
@@ -39,7 +43,25 @@ impl SearchClient {
         Ok(Self {
             pool,
             shared: Arc::new(EngineShared::new()),
+            concurrency: MAX_CONCURRENT_ENGINES,
         })
+    }
+
+    /// Build a client from a [`PhronaConfig`]: impersonation profile,
+    /// timeout, proxy pool and per-search concurrency limit.
+    pub fn with_config(cfg: &PhronaConfig) -> Result<Self> {
+        let mut client = Self::with_options(
+            cfg.profile(),
+            Some(cfg.timeout()),
+            Some(cfg.engines.proxies.clone()),
+        )?;
+        client.concurrency = cfg.concurrency_limit().max(1);
+        Ok(client)
+    }
+
+    /// The configured per-search engine concurrency cap.
+    pub fn concurrency_limit(&self) -> usize {
+        self.concurrency
     }
 
     /// The first (or only) pooled client — used by non-engine flows such as
@@ -51,9 +73,9 @@ impl SearchClient {
     /// Run a search across all enabled engines for the category.
     ///
     /// Each engine task is assigned one sticky `HttpClient` from the proxy
-    /// pool, and runs under a [`Semaphore`] limiting concurrency to
-    /// [`MAX_CONCURRENT_ENGINES`] simultaneous outbound requests. Engines
-    /// run concurrently (`FuturesUnordered`) under a single adaptive
+    /// pool, and runs under a [`Semaphore`] limiting concurrency to the
+    /// client's concurrency cap (default [`MAX_CONCURRENT_ENGINES`]).
+    /// Engines run concurrently (`FuturesUnordered`) under a single adaptive
     /// deadline (`opts.timeout`). As soon as the merged result set reaches
     /// `opts.max_results` the remaining in-flight engine futures are dropped
     /// (cancelled) and we return early. An engine that returns an `Ok` —
@@ -73,7 +95,7 @@ impl SearchClient {
             ));
         }
 
-        let sem = Arc::new(Semaphore::new(MAX_CONCURRENT_ENGINES));
+        let sem = Arc::new(Semaphore::new(self.concurrency));
 
         let futs = engines.iter().map(|engine| {
             let client = self.pool.get_client();

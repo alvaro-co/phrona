@@ -100,6 +100,27 @@ pub enum Profile {
 }
 
 impl Profile {
+    /// Resolve a lowercase profile name (family names and versioned
+    /// variants as used by `phrona.yaml` / `PHRONA_ENGINES_PROFILE`).
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name.trim().to_ascii_lowercase().as_str() {
+            "chrome" | "chrome148" => Some(Profile::Chrome),
+            "chrome149" => Some(Profile::Chrome149),
+            "chrome140" => Some(Profile::Chrome140),
+            "chrome131" => Some(Profile::Chrome131),
+            "chrome120" => Some(Profile::Chrome120),
+            "chrome100" => Some(Profile::Chrome100),
+            "firefox" | "firefox148" => Some(Profile::Firefox),
+            "firefox139" => Some(Profile::Firefox139),
+            "safari" | "safari26" => Some(Profile::Safari),
+            "edge" | "edge148" => Some(Profile::Edge),
+            "opera" | "opera131" => Some(Profile::Opera),
+            "okhttp" => Some(Profile::OkHttp),
+            "random" => Some(Profile::Random),
+            _ => None,
+        }
+    }
+
     fn to_emulation(self) -> Emulation {
         use wreq_util::Profile as P;
         let profile = match self {
