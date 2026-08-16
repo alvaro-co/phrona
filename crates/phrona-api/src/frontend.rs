@@ -1,9 +1,9 @@
 //! Serves the static web frontend.
 //!
-//! `index.html`, `style.css` and `app.js` live in the repository `frontend/`
+//! `index.html`, `style.css` and `app.js` live in this crate's `assets/`
 //! directory and are served from disk when present, so editing does not
 //! require rebuilds. If `$PHRONA_FRONTEND_DIR` is unset or unreadable, or the
-//! local `frontend/` folder is missing (standalone release binaries,
+//! local `assets/` folder is missing (standalone release binaries,
 //! containers), the assets embedded at compile time via `include_str!` are
 //! served instead — UI routes never 404.
 
@@ -11,11 +11,11 @@ use axum::body::Body;
 use axum::http::{StatusCode, header};
 use axum::response::Response;
 
-const FRONTEND_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../frontend");
+const FRONTEND_DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/assets");
 
-const EMBEDDED_INDEX: &str = include_str!("../../../frontend/index.html");
-const EMBEDDED_CSS: &str = include_str!("../../../frontend/style.css");
-const EMBEDDED_JS: &str = include_str!("../../../frontend/app.js");
+const EMBEDDED_INDEX: &str = include_str!("../assets/index.html");
+const EMBEDDED_CSS: &str = include_str!("../assets/style.css");
+const EMBEDDED_JS: &str = include_str!("../assets/app.js");
 
 /// Resolve the frontend directory. `$PHRONA_FRONTEND_DIR` overrides the
 /// compile-time default so packaged binaries can serve the assets from a

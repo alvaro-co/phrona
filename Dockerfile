@@ -10,7 +10,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
     useradd --create-home --shell /usr/sbin/nologin phrona && \
     rm -rf /var/lib/apt/lists/*
 COPY --from=builder /phrona /usr/local/bin/phrona
-COPY --from=builder /build/frontend /usr/share/phrona/frontend
+COPY --from=builder /build/crates/phrona-api/assets /usr/share/phrona/frontend
 ENV PHRONA_ADDR=0.0.0.0:8080
 ENV PHRONA_FRONTEND_DIR=/usr/share/phrona/frontend
 ENV HOME=/home/phrona

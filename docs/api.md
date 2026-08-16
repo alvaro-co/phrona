@@ -258,7 +258,7 @@ Response:
 
 ## Frontend
 
-The static app lives in `frontend/` next to the workspace and is served
-without embedding: edit `frontend/index.html`, `frontend/style.css`,
+The static app lives in `crates/phrona-api/assets/` and is served
+without embedding: edit `assets/index.html`, `assets/style.css`,
 `frontend/app.js` and restart the server - no rebuild needed. The fallback
 serves index.html for any other path.

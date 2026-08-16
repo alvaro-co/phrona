@@ -8,7 +8,7 @@ documentation = "https://docs.rs/phrona-mcp"
 description = "Model Context Protocol server exposing the phrona library to AI agents"
 repository.workspace = true
 homepage = "https://github.com/phrona/phrona"
-keywords = ["mcp", "model-context-protocol", "ai", "agents", "search"]
+keywords = ["mcp", "ai", "agents", "search"]
 categories = ["web-programming"]
 
 [dependencies]

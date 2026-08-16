@@ -13,7 +13,7 @@ crates/phrona-mcp      MCP server for AI agents (rmcp, stdio + TCP)
 crates/phrona-cli      phrona: single CLI to everything (search, server, MCP)
 crates/phrona-python   Python bindings (pyo3)
 examples/                  runnable Rust and Python examples
-frontend/                  Material 3 style static web app
+crates/phrona-api/assets/      Material 3 style static web app
 scripts/                   upstream drift monitor
 docs/                      full documentation
 ```
@@ -99,7 +99,7 @@ cargo run -p phrona-api          # or: phrona serve
 #                                    -> Tools tab: suggest / extract / ground / engines / test
 ```
 
-The web app is served from disk (`frontend/`), so editing it takes effect
+The web app is served from disk (`crates/phrona-api/assets/`), so editing it takes effect
 on reload - no rebuild.
 
 ## Features
