@@ -42,12 +42,14 @@ jobs:
             }
 
             const lines = report.drift.map(d => `- ${d}`).join('\n');
-            const body = `Upstream repositories moved past their pinned commits. See docs/upstream.md for what each project contributed and how to monitor.
-
-**Drift:**
-${lines}
-
-Suggested follow-up: diff the affected repo against the pinned commit, update scripts/upstream-refs.txt only after rebasing, and verify with the fixture workflow (\`cargo run -p phrona --bin fetch_fixtures\` + \`dbg_parse\`).`;
+            const body = [
+              'Upstream repositories moved past their pinned commits. See docs/upstream.md for what each project contributed and how to monitor.',
+              '',
+              '**Drift:**',
+              lines,
+              '',
+              'Suggested follow-up: diff the affected repo against the pinned commit, update scripts/upstream-refs.txt only after rebasing, and verify with the fixture workflow (`cargo run -p phrona --bin fetch_fixtures` + `dbg_parse`).',
+            ].join('\n');
 
             const issues = await github.rest.issues.listForRepo({
               owner: context.repo.owner,
