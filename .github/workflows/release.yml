@@ -81,30 +81,70 @@ jobs:
           path: dist/
 
   wheel:
-    name: build (python wheel)
+    name: wheel (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: linux-x86_64
+            arch: x86_64
+          - os: ubuntu-latest
+            target: linux-aarch64
+            arch: aarch64
+          - os: macos-13
+            target: macos-x86_64
+            arch: x86_64
+          - os: macos-latest
+            target: macos-arm64
+            arch: arm64
+          - os: windows-latest
+            target: windows-x86_64
+            arch: AMD64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Rust toolchain (host)
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+      - name: Build wheels
+        uses: pypa/cibuildwheel@v2.23.2
+        env:
+          CIBW_ARCHS: ${{ matrix.arch }}
+          CIBW_BUILD: "cp39-* cp310-* cp311-* cp312-* cp313-*"
+          # btls-sys needs a musl C++ toolchain that does not exist for
+          # manylinux containers; musllinux wheels are skipped.
+          CIBW_SKIP: "*-musllinux*"
+          CIBW_TEST_SKIP: "*"
+          CIBW_BEFORE_ALL_LINUX: "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal"
+          CIBW_ENVIRONMENT_LINUX: 'PATH=/root/.cargo/bin:$PATH'
+      - name: Upload wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.target }}
+          path: wheelhouse/*.whl
+
+  sdist:
+    name: build (source dist)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Rust toolchain
-        run: |
-          rustup toolchain install stable --profile minimal
-          rustup default stable
-      - name: Build wheel
+      - name: Build sdist
         run: |
           pip install --upgrade uv
-          uv build
-      - name: Rename for release
-        run: |
-          mkdir -p dist
-          cp "$(ls dist/phrona-*.whl | head -n1)" dist/phrona-wheel.whl
-      - name: Upload wheel
+          uv build --sdist
+      - name: Upload sdist
         uses: actions/upload-artifact@v4
         with:
-          name: build-wheel
-          path: dist/
+          name: wheels-sdist
+          path: dist/*.tar.gz
 
   release:
     name: publish release
@@ -126,8 +166,10 @@ jobs:
 
             Build artifacts:
             - `phrona`, `phrona-api`, `phrona-mcp` binaries
-              (linux x86_64 / aarch64, windows x86_64, macos aarch64)
-            - Python wheel (`phrona-wheel.whl`)
+              (linux x86_64 / aarch64, windows x86_64, macos x86_64 / arm64)
+            - Python wheels for CPython 3.9-3.13
+              (linux x86_64 / aarch64, windows x86_64, macos x86_64 / arm64)
+            - Source distribution (`phrona-*.tar.gz`)
 
             See the README and docs/ for usage:
             - CLI: `phrona --help`
@@ -156,21 +198,16 @@ jobs:
 
   publish-pypi:
     name: publish PyPI
-    needs: [wheel]
+    needs: [sdist, wheel]
     if: ${{ secrets.PYPI_TOKEN != '' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/download-artifact@v4
         with:
-          python-version: "3.12"
-      - name: Rust toolchain
-        run: |
-          rustup toolchain install stable --profile minimal
-          rustup default stable
-      - name: Build and publish wheel
-        run: |
-          pip install --upgrade uv
-          uv build
-          uv publish --token "${{ secrets.PYPI_TOKEN }}"
+          path: dist
+          merge-multiple: true
+      - name: Publish wheels and sdist to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          password: ${{ secrets.PYPI_TOKEN }}
 

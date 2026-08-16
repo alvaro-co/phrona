@@ -73,9 +73,10 @@ phrona.suggest("rus")
 
 Requires CPython <= 3.13 (pyo3 0.29).
 
-Pre-built wheels from the release workflow are Linux x86_64 only; on other
-platforms (macOS, Windows, aarch64) build from source with `uv build` /
-maturin, which needs a Rust toolchain.
+Pre-built wheels are published to PyPI for CPython 3.9-3.13 on linux
+(x86_64 / aarch64), macOS (x86_64 / arm64) and Windows (x86_64), plus an
+sdist for everything else (needs a Rust toolchain + `uv build` / maturin).
+No musllinux wheels (btls-sys requires a musl C++ toolchain).
 
 ## Quick start (MCP)
 
