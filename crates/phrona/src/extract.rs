@@ -1,11 +1,81 @@
+use std::net::{IpAddr, Ipv4Addr};
+
 use serde::Serialize;
 use serde::Serializer;
 
 use scraper::{Html, Selector};
+use url::Url;
 
 use crate::client::HttpClient;
 use crate::error::{Error, Result};
 use crate::parse;
+
+/// Reject addresses that are never safe to fetch from the internet:
+/// loopback, RFC1918 private / IPv6 ULA, CGNAT, link-local (incl. cloud
+/// metadata), broadcast, documentation, 6to4, NAT64, multicast, reserved and
+/// unspecified ranges. IPv4-compatible IPv6 addresses are unwrapped and
+/// judged by their embedded IPv4 address; the entire IPv4-mapped range
+/// (`::ffff:0:0/96`) is rejected.
+pub fn is_safe_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => {
+            !(v4.octets()[0] == 0 // 0.0.0.0/8
+            || v4.is_private() // 10/8, 172.16/12, 192.168/16
+            || (v4.octets()[0] == 100 && v4.octets()[1] & 0xc0 == 0x40) // 100.64/10 CGNAT
+            || v4.is_loopback() // 127/8
+            || v4.is_link_local() // 169.254/16
+            || (v4.octets()[0] == 192 && v4.octets()[1] == 0 && v4.octets()[2] == 0) // 192.0.0/24
+            || v4.is_documentation() // 192.0.2/24, 198.51.100/24, 203.0.113/24
+            || (v4.octets()[0] == 192 && v4.octets()[1] == 88 && v4.octets()[2] == 99) // 192.88.99/24
+            || (v4.octets()[0] == 198 && v4.octets()[1] & 0xfe == 0x12) // 198.18/15
+            || v4.is_multicast() // 224/4
+            || v4.octets()[0] & 0xf0 == 0xf0 // 240/4
+            || v4.is_broadcast())
+        } // 255.255.255.255/32
+        IpAddr::V6(v6) => {
+            if v6.is_loopback() || v6.is_unspecified() {
+                return false; // ::1/128, ::/128
+            }
+            let seg0 = v6.segments()[0];
+            if (seg0 & 0xff00) == 0xff00 {
+                return false; // ff00::/8 multicast (v4 224/4 equivalent)
+            }
+            if seg0 == 0 && v6.segments()[1] == 0 && v6.segments()[2] == 0 {
+                if v6.segments()[3] != 0 {
+                    return false; // ::ffff:0:0/96 IPv4-mapped
+                }
+                if v6.segments()[4] != 0 || v6.segments()[5] != 0 {
+                    return false; // IPv4-compatible ::/96
+                }
+                let lo = (u32::from(v6.segments()[6]) << 16) | u32::from(v6.segments()[7]);
+                return is_safe_ip(IpAddr::V4(Ipv4Addr::from(lo)));
+            }
+            if (seg0 & 0xffc0) == 0xfe80 {
+                return false; // fe80::/10 link-local
+            }
+            if (seg0 & 0xfe00) == 0xfc00 {
+                return false; // fc00::/7 unique-local
+            }
+            if seg0 == 0x64 && v6.segments()[1] == 0xff9b && v6.segments()[2] == 1 {
+                return false; // 64:ff9b:1::/48 NAT64
+            }
+            if seg0 == 0x100
+                && v6.segments()[1] == 0
+                && v6.segments()[2] == 0
+                && v6.segments()[3] == 0
+            {
+                return false; // 100::/64 discard
+            }
+            if seg0 == 0x2001 && v6.segments()[1] == 0xdb8 {
+                return false; // 2001:db8::/32 documentation
+            }
+            if seg0 == 0x2002 {
+                return false; // 2002::/16 6to4
+            }
+            true
+        }
+    }
+}
 
 /// A readable-text extraction of a web page (AI grounding).
 #[derive(Debug, Clone)]
@@ -30,21 +100,84 @@ impl Serialize for ExtractedPage {
     }
 }
 
+/// Maximum redirect hops followed by [`extract`], each re-validated for SSRF.
+const MAX_REDIRECTS: usize = 5;
+
 /// Fetch and extract the main content of a page.
 /// `query` optionally highlights the most relevant excerpt.
+///
+/// SSRF guard: every hop (initial URL and each redirect) is parsed,
+/// DNS-resolved and validated against [`is_safe_ip`] *before* a request is
+/// sent; a private/restricted destination aborts immediately. Redirects are
+/// followed manually (max [`MAX_REDIRECTS`] hops) with the client's
+/// automatic redirect handling disabled.
 pub async fn extract(
     client: &HttpClient,
     url: &str,
     max_chars: usize,
     query: Option<&str>,
 ) -> Result<ExtractedPage> {
-    let resp = client.get(url).await?;
-    if !resp.status().is_success() {
-        return Err(Error::unavailable("extract", resp.status().as_u16()));
+    let mut current = url.to_string();
+    for _ in 0..=MAX_REDIRECTS {
+        let parsed =
+            Url::parse(&current).map_err(|_| Error::invalid_query("extract", "invalid URL"))?;
+        if parsed.scheme() != "http" && parsed.scheme() != "https" {
+            return Err(Error::invalid_query(
+                "extract",
+                "unsupported URL scheme (http/https only)",
+            ));
+        }
+        let host = parsed
+            .host()
+            .ok_or_else(|| Error::invalid_query("extract", "URL has no host"))?;
+        let port = parsed
+            .port_or_known_default()
+            .ok_or_else(|| Error::invalid_query("extract", "URL has no port"))?;
+        let safe = match host {
+            url::Host::Ipv4(v4) => is_safe_ip(IpAddr::V4(v4)),
+            url::Host::Ipv6(v6) => is_safe_ip(IpAddr::V6(v6)),
+            url::Host::Domain(name) => {
+                let addrs = tokio::net::lookup_host((name, port))
+                    .await
+                    .map_err(|_| Error::invalid_query("extract", "host resolution failed"))?;
+                addrs.into_iter().all(|sa| is_safe_ip(sa.ip()))
+            }
+        };
+        if !safe {
+            return Err(Error::invalid_query(
+                "extract",
+                "SSRF blocked: IP address is in a private/restricted range",
+            ));
+        }
+
+        let resp = client
+            .get_no_redirect(&current, &wreq::header::HeaderMap::new())
+            .await?;
+        let status = resp.status();
+        if is_redirect_status(status) {
+            let loc = resp
+                .headers()
+                .get(wreq::header::LOCATION)
+                .and_then(|v| v.to_str().ok())
+                .ok_or_else(|| Error::internal("extract", "redirect without Location header"))?;
+            current = parsed
+                .join(loc)
+                .map_err(|_| Error::invalid_query("extract", "invalid redirect Location"))?
+                .to_string();
+            continue;
+        }
+        if !status.is_success() {
+            return Err(Error::unavailable("extract", status.as_u16()));
+        }
+        let bytes = resp.bytes().await.map_err(Error::from)?;
+        let html = String::from_utf8_lossy(&bytes).into_owned();
+        return Ok(extract_from_html(&html, &current, max_chars, query));
     }
-    let bytes = resp.bytes().await.map_err(Error::from)?;
-    let html = String::from_utf8_lossy(&bytes).into_owned();
-    Ok(extract_from_html(&html, url, max_chars, query))
+    Err(Error::internal("extract", "too many redirects"))
+}
+
+fn is_redirect_status(status: wreq::StatusCode) -> bool {
+    matches!(status.as_u16(), 301 | 302 | 303 | 307 | 308)
 }
 
 /// Pure function: parse HTML and extract readable content.
@@ -85,7 +218,7 @@ pub fn extract_from_html(
     let img_sel = Selector::parse("img[src]").unwrap();
     for node in doc.select(&img_sel) {
         if let Some(src) = node.value().attr("src") {
-            if src.starts_with("http") && images.len() < 10 {
+            if (src.starts_with("http://") || src.starts_with("https://")) && images.len() < 10 {
                 images.push(src.to_string());
             }
         }
@@ -133,6 +266,7 @@ pub async fn extract_many(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::ErrorKind;
 
     const HTML: &str = r#"
 <!doctype html><html><head>
@@ -176,5 +310,88 @@ mod tests {
         assert!(page.text.is_empty());
         let page = extract_from_html("<p>hi</p>", "u", 100, Some("q"));
         assert!(!page.text.is_empty());
+    }
+
+    #[test]
+    fn is_safe_ip_rejects_restricted_ranges() {
+        for ip in [
+            "127.0.0.1",
+            "127.8.8.8",
+            "10.0.0.1",
+            "192.168.1.1",
+            "172.16.0.1",
+            "172.31.255.254",
+            "169.254.169.254",
+            "169.254.0.1",
+            "0.0.0.0",
+            "255.255.255.255",
+            "192.0.2.1",
+            "198.51.100.1",
+            "203.0.113.1",
+            "::1",
+            "::",
+            "fe80::1",
+            "fc00::1",
+            "fd12:3456:789a::1",
+            "ff02::1",
+            "::ffff:127.0.0.1",
+            "::ffff:10.0.0.1",
+            "::127.0.0.1",
+        ] {
+            let ip: IpAddr = ip.parse().unwrap();
+            assert!(!is_safe_ip(ip), "{ip} must be rejected");
+        }
+    }
+
+    #[test]
+    fn is_safe_ip_allows_public_addresses() {
+        for ip in [
+            "8.8.8.8",
+            "1.1.1.1",
+            "93.184.216.34",
+            "172.32.0.1",
+            "169.255.0.1",
+            "2001:4860:4860::8888",
+            "2606:4700:4700::1111",
+        ] {
+            let ip: IpAddr = ip.parse().unwrap();
+            assert!(is_safe_ip(ip), "{ip} must be allowed");
+        }
+    }
+
+    #[tokio::test]
+    async fn extract_rejects_private_destinations_before_network() {
+        let client = HttpClient::builder().build().unwrap();
+        for url in [
+            "http://127.0.0.1/",
+            "http://169.254.169.254/latest/meta-data/",
+            "http://10.0.0.1/",
+            "http://192.168.1.1/",
+            "http://[::1]/",
+            "http://[fc00::1]/",
+            "http://localhost/",
+        ] {
+            let err = extract(&client, url, 100, None).await.unwrap_err();
+            assert!(
+                matches!(err.kind(), ErrorKind::InvalidQuery { .. }),
+                "{url}: {err}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn extract_rejects_non_http_schemes() {
+        let client = HttpClient::builder().build().unwrap();
+        for url in [
+            "javascript:alert(1)",
+            "data:text/html,hi",
+            "file:///etc/passwd",
+        ] {
+            let err = extract(&client, url, 100, None).await.unwrap_err();
+            assert!(
+                matches!(err.kind(), ErrorKind::InvalidQuery { .. }),
+                "{url}: {err}"
+            );
+        }
     }
 }

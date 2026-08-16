@@ -10,6 +10,22 @@ function esc(s) {
   return div.innerHTML;
 }
 
+/* Only http(s) URLs may be navigated to or embedded. javascript:, data:,
+   vbscript:, and malformed URLs become a dead link ("about:blank") so an
+   attacker can never run code through href/src/window.open bindings. */
+function sanitizeUrl(rawUrl) {
+  if (typeof rawUrl !== "string" || !rawUrl.trim()) return "about:blank";
+  let parsed;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    return "about:blank";
+  }
+  const proto = parsed.protocol.toLowerCase();
+  if (proto !== "http:" && proto !== "https:") return "about:blank";
+  return parsed.href;
+}
+
 /* ===================== theming ===================== */
 
 const setTheme = (t) => {
@@ -251,9 +267,12 @@ function card(r) {
   if (state.category === "images") {
     const wrap = document.createElement("article");
     wrap.className = "image-card";
-    wrap.innerHTML = `<img loading="lazy" src="${esc(r.image_url || r.thumbnail_url)}" alt="${esc(r.title)}" onerror="this.style.visibility='hidden'">
+    wrap.innerHTML = `<img loading="lazy" src="${esc(sanitizeUrl(r.image_url || r.thumbnail_url))}" alt="${esc(r.title)}" onerror="this.style.visibility='hidden'">
       <div class="cap"><span class="t">${esc(r.title)}</span><span class="d">${r.width ? `${esc(r.width)}×${esc(r.height)}` : ""}</span></div>`;
-    wrap.addEventListener("click", () => window.open(r.url, "_blank"));
+    wrap.addEventListener("click", () => {
+      const u = sanitizeUrl(r.url);
+      if (u !== "about:blank") window.open(u, "_blank", "noopener,noreferrer");
+    });
     return wrap;
   }
   const sub = [
@@ -266,12 +285,12 @@ function card(r) {
     r.uploader && `<span>${esc(r.uploader)}</span>`,
   ].filter(Boolean).join("");
   const thumb = state.category === "videos" && r.thumbnail_url
-    ? `<div class="vid-thumb"><img loading="lazy" src="${esc(r.thumbnail_url)}" alt=""><span class="vid-dur">${esc(r.duration || "")}</span></div>`
+    ? `<div class="vid-thumb"><img loading="lazy" src="${esc(sanitizeUrl(r.thumbnail_url))}" alt=""><span class="vid-dur">${esc(r.duration || "")}</span></div>`
     : "";
   const wrap = document.createElement("article");
   wrap.className = "card";
   wrap.innerHTML = `
-    <h3><a href="${esc(r.url)}" target="_blank" rel="noopener">${esc(r.title)}</a></h3>
+    <h3><a href="${esc(sanitizeUrl(r.url))}" target="_blank" rel="noopener noreferrer">${esc(r.title)}</a></h3>
     <div class="url">${esc(r.url)}</div>
     ${thumb}
     ${r.description ? `<p class="desc">${esc(r.description)}</p>` : ""}
@@ -331,7 +350,7 @@ const TOOLS = {
     render: (el, d) => {
       el.innerHTML = `<div class="answer">${esc(d.answer)}</div>` +
         (d.sources || []).map((s) =>
-          `<article class="card"><h3><a href="${esc(s.url)}" target="_blank" rel="noopener">${esc(s.title)}</a></h3>
+          `<article class="card"><h3><a href="${esc(sanitizeUrl(s.url))}" target="_blank" rel="noopener noreferrer">${esc(s.title)}</a></h3>
            <div class="url">${esc(s.url)}</div><p class="desc">${esc(s.content)}</p>
            <div class="sub"><span>score ${esc(String(s.score))}</span></div></article>`).join("");
     },
