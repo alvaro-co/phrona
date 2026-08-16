@@ -1,5 +1,6 @@
 use std::net::{IpAddr, Ipv4Addr};
 
+use futures::StreamExt;
 use serde::Serialize;
 use serde::Serializer;
 
@@ -103,6 +104,23 @@ impl Serialize for ExtractedPage {
 /// Maximum redirect hops followed by [`extract`], each re-validated for SSRF.
 const MAX_REDIRECTS: usize = 5;
 
+/// Hard cap on response bodies read by [`extract`] (5 MiB): protects against
+/// memory-exhaustion (OOM) DoS from huge or unbounded pages.
+const MAX_BODY_BYTES: usize = 5_242_880;
+
+/// Append `chunk` to `buf`, never growing `buf` beyond [`MAX_BODY_BYTES`].
+/// Returns `true` when the cap has been reached and the caller should stop
+/// reading.
+fn push_capped(buf: &mut Vec<u8>, chunk: &[u8]) -> bool {
+    let room = MAX_BODY_BYTES.saturating_sub(buf.len());
+    if room == 0 {
+        return true;
+    }
+    let take = chunk.len().min(room);
+    buf.extend_from_slice(&chunk[..take]);
+    take < chunk.len()
+}
+
 /// Fetch and extract the main content of a page.
 /// `query` optionally highlights the most relevant excerpt.
 ///
@@ -150,9 +168,7 @@ pub async fn extract(
             ));
         }
 
-        let resp = client
-            .get_no_redirect(&current, &wreq::header::HeaderMap::new())
-            .await?;
+        let resp = client.get_no_redirect(&current).await?;
         let status = resp.status();
         if is_redirect_status(status) {
             let loc = resp
@@ -169,7 +185,14 @@ pub async fn extract(
         if !status.is_success() {
             return Err(Error::unavailable("extract", status.as_u16()));
         }
-        let bytes = resp.bytes().await.map_err(Error::from)?;
+        let mut bytes: Vec<u8> = Vec::new();
+        let mut stream = resp.bytes_stream();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(Error::from)?;
+            if push_capped(&mut bytes, &chunk) {
+                break;
+            }
+        }
         let html = String::from_utf8_lossy(&bytes).into_owned();
         return Ok(extract_from_html(&html, &current, max_chars, query));
     }
@@ -310,6 +333,28 @@ mod tests {
         assert!(page.text.is_empty());
         let page = extract_from_html("<p>hi</p>", "u", 100, Some("q"));
         assert!(!page.text.is_empty());
+    }
+
+    #[test]
+    fn body_cap_limits_accumulation() {
+        let mut buf = Vec::new();
+        let big = vec![0u8; MAX_BODY_BYTES + 1000];
+        assert!(push_capped(&mut buf, &big));
+        assert_eq!(buf.len(), MAX_BODY_BYTES);
+        assert!(push_capped(&mut buf, &[1, 2, 3]));
+        assert_eq!(buf.len(), MAX_BODY_BYTES);
+        assert!(buf.iter().all(|&b| b == 0));
+
+        let mut buf = Vec::new();
+        let mut done = false;
+        for _ in 0..6000 {
+            done = push_capped(&mut buf, &[7; 1024]);
+            if done {
+                break;
+            }
+        }
+        assert_eq!(buf.len(), MAX_BODY_BYTES);
+        assert!(done);
     }
 
     #[test]
