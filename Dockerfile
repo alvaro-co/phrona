@@ -1,11 +1,12 @@
 # Multi-stage build: Rust release binary + frontend assets.
-FROM rust:1.85-bookworm AS builder
+FROM rust:1.97-bookworm AS builder
 WORKDIR /build
 COPY . .
 RUN cargo build --release --locked -p phrona-cli && \
     cp target/release/phrona /phrona
 
-FROM debian:bookworm-slimRUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl && \
+FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl && \
     useradd --create-home --shell /usr/sbin/nologin phonrona && \
     rm -rf /var/lib/apt/lists/*
 COPY --from=builder /phrona /usr/local/bin/phrona

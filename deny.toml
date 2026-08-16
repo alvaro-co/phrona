@@ -29,7 +29,7 @@ allow = [
     "MPL-2.0",
     "AGPL-3.0-only",
 ]
-# The workspace's own crates (phrona, phonrona-api, ...) are covered by the
+# The workspace's own crates (phrona, phrona-api, ...) are covered by the
 # repository license; they are not published to crates.io with the rest.
 private = { ignore = true }
 confidence-threshold = 0.8
