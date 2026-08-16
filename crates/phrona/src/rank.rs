@@ -1,14 +1,11 @@
 use crate::dedup::GroupedResult;
 
-/// Split a query into the non-trivial alphanumeric terms used for matching.
+/// Split a query into the alphanumeric terms used for matching, using the
+/// exact same tokenizer as document titles and bodies. Matching the
+/// document side keeps scoring symmetric: short or symbol-heavy queries
+/// ("Go", "C#", "AI", "R") still yield BM25 terms instead of an empty set.
 pub fn query_terms(query: &str) -> Vec<String> {
-    query
-        .to_lowercase()
-        .split_whitespace()
-        .filter(|t| t.chars().count() > 2)
-        .map(|t| t.trim_matches(|c: char| !c.is_alphanumeric()).to_string())
-        .filter(|t| !t.is_empty())
-        .collect()
+    tokenize(query)
 }
 
 /// Raw (un-normalized) relevance score, shared by [`rank`] (ordering) and
@@ -117,6 +114,29 @@ mod tests {
         g.count = n;
         g.engines = engines.iter().map(|s| s.to_string()).collect();
         g
+    }
+
+    #[test]
+    fn query_terms_matches_document_tokenizer() {
+        // Short and symbol-heavy queries must produce BM25 terms, just
+        // like the tokenizer on the document side does.
+        assert_eq!(query_terms("Go"), vec!["go".to_string()]);
+        assert_eq!(query_terms("C#"), vec!["c".to_string()]);
+        assert_eq!(query_terms("AI"), vec!["ai".to_string()]);
+        assert_eq!(query_terms("R"), vec!["r".to_string()]);
+        assert_eq!(
+            query_terms("rust book"),
+            vec!["rust".to_string(), "book".to_string()]
+        );
+        assert_eq!(
+            query_terms("rust-book 2.0"),
+            vec![
+                "rust".to_string(),
+                "book".to_string(),
+                "2".to_string(),
+                "0".to_string()
+            ]
+        );
     }
 
     #[test]

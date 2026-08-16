@@ -264,8 +264,8 @@ pub fn extract_from_html(
 
 fn collect_text(node: &scraper::ElementRef) -> String {
     let mut out = String::new();
-    for child in
-        node.select(&Selector::parse("p, h1, h2, h3, h4, li, blockquote, pre, td").unwrap())
+    for child in node
+        .select(&Selector::parse("p, h1, h2, h3, h4, h5, h6, li, blockquote, pre, td, th").unwrap())
     {
         let t = parse::text_of(&child);
         if !t.is_empty() {
@@ -274,9 +274,42 @@ fn collect_text(node: &scraper::ElementRef) -> String {
         }
     }
     if out.trim().is_empty() {
-        out = node.text().collect();
+        collect_text_nodes(node, 0, &mut out);
     }
     out
+}
+
+/// Fallback for pages without semantic text blocks: walk child nodes and
+/// keep visible text while skipping `<script>`, `<style>`, `<noscript>`,
+/// `<svg>` and `<nav>` subtrees, so inline code and navigation noise never
+/// reach the extracted output. Depth-capped against pathological nesting.
+fn collect_text_nodes(node: &scraper::ElementRef, depth: usize, out: &mut String) {
+    if depth > 32 {
+        return;
+    }
+    for child in node.children() {
+        match child.value() {
+            scraper::Node::Text(text) => {
+                let t = text.text.trim();
+                if !t.is_empty() {
+                    out.push_str(t);
+                    out.push(' ');
+                }
+            }
+            // Skip noise subtrees (inline code, navigation) entirely.
+            scraper::Node::Element(element)
+                if matches!(
+                    element.name(),
+                    "script" | "style" | "noscript" | "svg" | "nav"
+                ) => {}
+            scraper::Node::Element(_) => {
+                if let Some(el) = scraper::ElementRef::wrap(child) {
+                    collect_text_nodes(&el, depth + 1, out);
+                }
+            }
+            _ => {}
+        }
+    }
 }
 
 /// Extract several pages in parallel (used by AI grounding endpoints).
