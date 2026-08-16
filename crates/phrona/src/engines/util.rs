@@ -99,7 +99,7 @@ pub fn classify(
         content_type.map(|v| v.split(';').next().unwrap_or(v).trim().to_ascii_lowercase())
     {
         let ok = match expect {
-            MediaType::Html => ct == "text/html",
+            MediaType::Html => ct == "text/html" || ct == "application/xhtml+xml",
             // Other types (`text/plain`, `text/javascript`, ...) are left to
             // `parse_json_body`, which validates the body grammar itself.
             MediaType::Json => !matches!(
@@ -324,6 +324,16 @@ mod tests {
         );
         assert!(classify("t", s(200), &h, None, MediaType::Html).is_ok());
         assert!(classify("t", s(200), &h, Some("text/html"), MediaType::Html).is_ok());
+        assert!(
+            classify(
+                "t",
+                s(200),
+                &h,
+                Some("application/xhtml+xml"),
+                MediaType::Html
+            )
+            .is_ok()
+        );
         assert!(classify("t", s(200), &h, Some("application/json"), MediaType::Json).is_ok());
         assert!(
             classify(

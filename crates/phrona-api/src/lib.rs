@@ -68,8 +68,19 @@ impl AppState {
         }
     }
 
+    /// Constant-time API-key comparison: a configured key is only ever
+    /// compared with XOR folds of equal-length byte buffers, never with
+    /// early-exit string equality, so timing cannot leak key prefixes.
     pub fn authorized(&self, key: Option<&str>) -> bool {
-        self.api_key.as_deref().is_none_or(|want| key == Some(want))
+        match (&self.api_key, key) {
+            (None, _) => true,
+            (Some(want), Some(got)) => {
+                let w = want.as_bytes();
+                let g = got.as_bytes();
+                w.len() == g.len() && w.iter().zip(g).fold(0u8, |acc, (a, b)| acc | (a ^ b)) == 0
+            }
+            (Some(_), None) => false,
+        }
     }
 
     /// Fixed-window rate limit keyed on the client IP (falling back to a
@@ -613,6 +624,28 @@ mod tests {
         let body = axum::body::to_bytes(resp.into_body(), 1024).await.unwrap();
         let v: Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(v["error"], "bad input");
+    }
+
+    #[test]
+    fn authorized_semantics() {
+        let client = PhronaConfig::defaults().search_client().unwrap();
+        let state = AppState::new(client, Some("test-secret".into()), 1000, 0, 100_000);
+        assert!(state.authorized(Some("test-secret")));
+        // wrong key, shorter key, longer key, missing key
+        assert!(!state.authorized(Some("wrong")));
+        assert!(!state.authorized(Some("test-secre")));
+        assert!(!state.authorized(Some("test-secret2")));
+        assert!(!state.authorized(None));
+        // no configured key: every request is accepted
+        let open = AppState::new(
+            PhronaConfig::defaults().search_client().unwrap(),
+            None,
+            1000,
+            0,
+            100_000,
+        );
+        assert!(open.authorized(None));
+        assert!(open.authorized(Some("anything")));
     }
 
     #[tokio::test]

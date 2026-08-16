@@ -36,8 +36,8 @@ pub fn dedup_key(url: &str) -> String {
     ];
     let query: Vec<(String, String)> = u
         .query_pairs()
-        .filter(|(k, _)| !strip.contains(&k.as_ref()))
         .map(|(k, v)| (k.to_lowercase(), v.into_owned()))
+        .filter(|(k, _)| !strip.contains(&k.as_str()))
         .collect();
     let mut key = format!("{scheme}://{host}{path}");
     if !query.is_empty() {
@@ -120,6 +120,25 @@ mod tests {
         assert_eq!(
             dedup_key("https://example.com/a?fbclid=abc&si=def&ref=ghi"),
             "https://example.com/a"
+        );
+    }
+
+    #[test]
+    fn dedup_key_strips_uppercase_tracking_params() {
+        // Tracking parameters are conventionally case-insensitive; an
+        // engine returning UTM/GCLID in uppercase must dedupe against one
+        // returning them lowercase.
+        assert_eq!(
+            dedup_key("https://example.com/a?UTM_SOURCE=x&GCLID=123&id=1"),
+            "https://example.com/a?id=1"
+        );
+        assert_eq!(
+            dedup_key("https://example.com/a?utm_source=x&gclid=123"),
+            "https://example.com/a"
+        );
+        assert_eq!(
+            dedup_key("https://example.com/a?UTM_SOURCE=x"),
+            dedup_key("https://example.com/a?utm_source=x")
         );
     }
 
