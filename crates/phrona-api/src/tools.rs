@@ -8,12 +8,23 @@ use serde_json::{Value, json};
 
 use phrona::models::Category;
 
-use crate::{AppError, AppResult, AppState, JsonBody, JsonQuery};
+use crate::{AppError, AppResult, AppState, HeaderAuth, JsonBody, JsonQuery};
 
 /// GET /v1/extract?url=...&max_chars=...&query=... - readable-text
-/// extraction of a page (the same feature as `ms extract`).
+/// extraction of a page (the same feature as `ms extract`). Auth is
+/// header-only: query-string credentials are rejected.
 #[derive(Deserialize)]
-pub struct ExtractParams {
+pub struct ExtractGetParams {
+    url: String,
+    #[serde(default)]
+    max_chars: Option<usize>,
+    #[serde(default)]
+    query: Option<String>,
+}
+
+/// POST /v1/extract - same feature, credentials via headers or body.
+#[derive(Deserialize)]
+pub struct ExtractPostParams {
     url: String,
     #[serde(default)]
     max_chars: Option<usize>,
@@ -33,44 +44,47 @@ pub struct TestParams {
     category: Option<String>,
     #[serde(default)]
     max_results: Option<usize>,
-    #[serde(default)]
-    api_key: Option<String>,
 }
 
 pub async fn extract_get(
     State(state): State<Arc<AppState>>,
-    JsonQuery(p): JsonQuery<ExtractParams>,
+    auth: HeaderAuth,
+    JsonQuery(p): JsonQuery<ExtractGetParams>,
 ) -> AppResult<impl IntoResponse> {
-    if !state.authorized(p.api_key.as_deref()) {
+    if !state.authorized(auth.key()) {
         return Err(AppError::unauthorized());
     }
-    run_extract(&state, &p).await
+    run_extract(&state, &p.url, p.max_chars, p.query.as_deref()).await
 }
 
 pub async fn extract_post(
     State(state): State<Arc<AppState>>,
-    JsonBody(p): JsonBody<ExtractParams>,
+    headers: axum::http::HeaderMap,
+    JsonBody(p): JsonBody<ExtractPostParams>,
 ) -> AppResult<impl IntoResponse> {
-    if !state.authorized(p.api_key.as_deref()) {
+    if !state.authorized(crate::auth_key(&headers, p.api_key.as_deref()).as_deref()) {
         return Err(AppError::unauthorized());
     }
-    run_extract(&state, &p).await
+    run_extract(&state, &p.url, p.max_chars, p.query.as_deref()).await
 }
 
 async fn run_extract(
     state: &AppState,
-    p: &ExtractParams,
+    url: &str,
+    max_chars: Option<usize>,
+    query: Option<&str>,
 ) -> AppResult<Json<phrona::ExtractedPage>> {
-    let max_chars = p.max_chars.unwrap_or(5000).clamp(1, 100_000);
-    let page = phrona::extract(state.client.http(), &p.url, max_chars, p.query.as_deref()).await?;
+    let max_chars = max_chars.unwrap_or(5000).clamp(1, 100_000);
+    let page = phrona::extract(state.client.http(), url, max_chars, query).await?;
     Ok(Json(page))
 }
 
 pub async fn test(
     State(state): State<Arc<AppState>>,
+    auth: HeaderAuth,
     JsonQuery(p): JsonQuery<TestParams>,
 ) -> AppResult<Json<Value>> {
-    if !state.authorized(p.api_key.as_deref()) {
+    if !state.authorized(auth.key()) {
         return Err(AppError::unauthorized());
     }
     let cats: Vec<Category> = match p.category.as_deref() {

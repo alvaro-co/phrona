@@ -139,13 +139,37 @@ impl PhronaMcp {
     async fn run_search(&self, p: &SearchParams, category: Category) -> String {
         let opts = match Self::build_opts(p, category, self.max_results_limit) {
             Ok(opts) => opts,
-            Err(msg) => return serde_json::json!({"error": msg}).to_string(),
+            Err(msg) => {
+                return envelope(serde_json::json!({
+                    "query": p.query,
+                    "total": 0,
+                    "results": [],
+                    "error": msg,
+                }));
+            }
         };
         match self.client.search(opts).await {
-            Ok(resp) => serde_json::to_string_pretty(&resp).unwrap_or_else(|e| e.to_string()),
-            Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
+            Ok(resp) => envelope(serde_json::to_value(&resp).unwrap_or_else(
+                |_| serde_json::json!({"query": p.query, "total": 0, "results": []}),
+            )),
+            Err(e) => envelope(serde_json::json!({
+                "query": p.query,
+                "total": 0,
+                "results": [],
+                "error": e.to_string(),
+            })),
         }
     }
+}
+
+/// Serialize a tool result as a single-line JSON string. MCP stdio clients
+/// parse tool outputs as JSON, so every handler must return valid JSON —
+/// never an empty string or a debug-formatted value. A serialization
+/// failure (theoretically unreachable for `serde_json::Value`) degrades to
+/// a fixed JSON envelope.
+fn envelope(v: serde_json::Value) -> String {
+    serde_json::to_string(&v)
+        .unwrap_or_else(|_| r#"{"error":"internal serialization failure"}"#.to_string())
 }
 
 #[tool_router(server_handler)]
@@ -195,14 +219,13 @@ impl PhronaMcp {
         )
         .await
         {
-            Ok(page) => serde_json::json!({
+            Ok(page) => envelope(serde_json::json!({
                 "url": page.url,
                 "title": page.title,
                 "description": page.description,
                 "text": page.text,
-            })
-            .to_string(),
-            Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
+            })),
+            Err(e) => envelope(serde_json::json!({"error": e.to_string()})),
         }
     }
 
@@ -212,15 +235,23 @@ impl PhronaMcp {
         match &p.source {
             Some(name) => {
                 let Some(source) = phrona::SuggestSource::from_name(name) else {
-                    return serde_json::json!({"error": format!("unknown source '{name}'")})
-                        .to_string();
+                    return envelope(serde_json::json!({
+                        "query": p.query,
+                        "suggestions": [],
+                        "error": format!("unknown source '{name}'"),
+                    }));
                 };
                 match phrona::suggest(self.client.http(), source, &p.query, region).await {
-                    Ok(list) => {
-                        serde_json::json!({"query": p.query, "source": name, "suggestions": list})
-                            .to_string()
-                    }
-                    Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
+                    Ok(list) => envelope(serde_json::json!({
+                        "query": p.query,
+                        "source": name,
+                        "suggestions": list,
+                    })),
+                    Err(e) => envelope(serde_json::json!({
+                        "query": p.query,
+                        "suggestions": [],
+                        "error": e.to_string(),
+                    })),
                 }
             }
             None => {
@@ -229,7 +260,7 @@ impl PhronaMcp {
                     .into_iter()
                     .map(|(s, list)| (s.name().to_string(), serde_json::json!(list)))
                     .collect();
-                serde_json::json!({"query": p.query, "suggestions": map}).to_string()
+                envelope(serde_json::json!({"query": p.query, "suggestions": map}))
             }
         }
     }
@@ -250,7 +281,7 @@ impl PhronaMcp {
                 .collect();
             out.insert(cat.as_str().to_string(), serde_json::json!(names));
         }
-        serde_json::json!({"engines": out}).to_string()
+        envelope(serde_json::json!({"engines": out}))
     }
 
     #[tool(
@@ -259,7 +290,14 @@ impl PhronaMcp {
     async fn search_grounded(&self, Parameters(p): Parameters<SearchParams>) -> String {
         let opts = match Self::build_opts(&p, Category::Web, self.max_results_limit) {
             Ok(opts) => opts,
-            Err(msg) => return serde_json::json!({"error": msg}).to_string(),
+            Err(msg) => {
+                return envelope(serde_json::json!({
+                    "query": p.query,
+                    "answer": "",
+                    "sources": [],
+                    "error": msg,
+                }));
+            }
         };
         match self.client.search(opts).await {
             Ok(resp) => {
@@ -293,14 +331,18 @@ impl PhronaMcp {
                         resp.query
                     )
                 });
-                serde_json::json!({
+                envelope(serde_json::json!({
                     "query": resp.query,
                     "answer": answer,
                     "sources": sources,
-                })
-                .to_string()
+                }))
             }
-            Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
+            Err(e) => envelope(serde_json::json!({
+                "query": p.query,
+                "answer": "",
+                "sources": [],
+                "error": e.to_string(),
+            })),
         }
     }
 }
@@ -387,5 +429,36 @@ mod tests {
         assert!(PhronaMcp::build_opts(&p, Category::Web, 100).is_err());
         p.safesearch = Some("strict".into());
         assert!(PhronaMcp::build_opts(&p, Category::Web, 100).is_ok());
+    }
+
+    #[test]
+    fn envelope_is_always_valid_json() {
+        let v: serde_json::Value = serde_json::from_str(&envelope(serde_json::json!({
+            "query": "rust",
+            "total": 0,
+            "results": [],
+        })))
+        .unwrap();
+        assert_eq!(v["query"], "rust");
+        assert_eq!(v["total"], 0);
+        assert!(v["results"].is_array());
+    }
+
+    #[tokio::test]
+    async fn tool_errors_return_json_envelopes_with_query_total_results() {
+        let mut p = params("rust");
+        p.time_range = Some("bogus".into());
+        let out = PhronaMcp::with_config(&PhronaConfig::defaults())
+            .run_search(&p, Category::Web)
+            .await;
+        let v: serde_json::Value = serde_json::from_str(&out).expect("tool output is JSON");
+        assert_eq!(v["query"], "rust");
+        assert_eq!(v["total"], 0);
+        assert!(v["results"].is_array());
+        assert!(
+            v["error"]
+                .as_str()
+                .is_some_and(|e| e.contains("time_range"))
+        );
     }
 }

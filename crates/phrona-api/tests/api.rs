@@ -26,17 +26,23 @@ async fn get(router: &axum::Router, path: &str) -> (StatusCode, Value, String) {
         .body(Body::empty())
         .unwrap();
     let res = router.clone().oneshot(req).await.unwrap();
-    let status = res.status();
-    let content_type = res
-        .headers()
-        .get(header::CONTENT_TYPE)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("")
-        .to_string();
-    let bytes = res.into_body().collect().await.unwrap().to_bytes();
-    let text = String::from_utf8_lossy(&bytes).to_string();
-    let json = serde_json::from_str(&text).unwrap_or(Value::Null);
-    (status, json, content_type)
+    read(res).await
+}
+
+async fn get_header(
+    router: &axum::Router,
+    path: &str,
+    name: &str,
+    value: &str,
+) -> (StatusCode, Value, String) {
+    let req = Request::builder()
+        .method(Method::GET)
+        .uri(path)
+        .header(name, value)
+        .body(Body::empty())
+        .unwrap();
+    let res = router.clone().oneshot(req).await.unwrap();
+    read(res).await
 }
 
 async fn post_json(router: &axum::Router, path: &str, body: &str) -> (StatusCode, Value, String) {
@@ -47,6 +53,26 @@ async fn post_json(router: &axum::Router, path: &str, body: &str) -> (StatusCode
         .body(Body::from(body.to_string()))
         .unwrap();
     let res = router.clone().oneshot(req).await.unwrap();
+    read(res).await
+}
+
+async fn post_json_header(
+    router: &axum::Router,
+    path: &str,
+    body: &str,
+) -> (StatusCode, Value, String) {
+    let req = Request::builder()
+        .method(Method::POST)
+        .uri(path)
+        .header(header::CONTENT_TYPE, "application/json")
+        .header("x-api-key", "test-secret")
+        .body(Body::from(body.to_string()))
+        .unwrap();
+    let res = router.clone().oneshot(req).await.unwrap();
+    read(res).await
+}
+
+async fn read(res: axum::response::Response) -> (StatusCode, Value, String) {
     let status = res.status();
     let content_type = res
         .headers()
@@ -123,16 +149,27 @@ async fn search_requires_key_when_configured() {
 #[tokio::test]
 async fn search_wrong_key_is_401() {
     let router = key_router();
-    let (status, _, _) = get(&router, "/v1/search?q=rust&api_key=wrong").await;
+    let (status, _, _) = get_header(&router, "/v1/search?q=rust", "x-api-key", "wrong").await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn search_query_string_api_key_is_rejected_with_400() {
+    let router = key_router();
+    let (status, json, _) = get(&router, "/v1/search?q=rust&api_key=test-secret").await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let msg = json["error"].as_str().unwrap_or("");
+    assert!(msg.contains("query string"), "got: {msg}");
 }
 
 #[tokio::test]
 async fn search_invalid_category_is_400() {
     let router = key_router();
-    let (status, json, _) = get(
+    let (status, json, _) = get_header(
         &router,
-        "/v1/search?q=rust&api_key=test-secret&category=bogus",
+        "/v1/search?q=rust&category=bogus",
+        "x-api-key",
+        "test-secret",
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
@@ -142,9 +179,11 @@ async fn search_invalid_category_is_400() {
 #[tokio::test]
 async fn search_unknown_engine_is_400() {
     let router = key_router();
-    let (status, json, _) = get(
+    let (status, json, _) = get_header(
         &router,
-        "/v1/search?q=rust&api_key=test-secret&engines=nope",
+        "/v1/search?q=rust&engines=nope",
+        "x-api-key",
+        "test-secret",
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
@@ -154,9 +193,11 @@ async fn search_unknown_engine_is_400() {
 #[tokio::test]
 async fn search_invalid_safesearch_is_400() {
     let router = key_router();
-    let (status, _, _) = get(
+    let (status, _, _) = get_header(
         &router,
-        "/v1/search?q=rust&api_key=test-secret&safesearch=extreme",
+        "/v1/search?q=rust&safesearch=extreme",
+        "x-api-key",
+        "test-secret",
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
@@ -179,7 +220,7 @@ async fn suggest_requires_key() {
 #[tokio::test]
 async fn suggest_missing_q_is_400_json() {
     let router = key_router();
-    let (status, json, _) = get(&router, "/v1/suggest?api_key=test-secret").await;
+    let (status, json, _) = get_header(&router, "/v1/suggest", "x-api-key", "test-secret").await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(json["error"], "invalid query parameters: missing field `q`");
 }
@@ -187,7 +228,7 @@ async fn suggest_missing_q_is_400_json() {
 #[tokio::test]
 async fn search_missing_q_is_400_json() {
     let router = key_router();
-    let (status, json, _) = get(&router, "/v1/search?api_key=test-secret").await;
+    let (status, json, _) = get_header(&router, "/v1/search", "x-api-key", "test-secret").await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert_eq!(json["error"], "invalid query parameters: missing field `q`");
 }
@@ -228,10 +269,22 @@ async fn tavily_requires_key() {
 }
 
 #[tokio::test]
+async fn tavily_wrong_body_key_is_401() {
+    let router = key_router();
+    // the JSON body api_key is consulted (Tavily SDK drop-in auth)
+    let (status, _, _) = post_json(
+        &router,
+        "/search",
+        r#"{"query": "rust", "api_key": "wrong"}"#,
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
 async fn grounding_malformed_json_is_400_json() {
     let router = key_router();
-    let (status, json, ct) =
-        post_json(&router, "/v1/grounding?api_key=test-secret", "{not json").await;
+    let (status, json, ct) = post_json_header(&router, "/v1/grounding", "{not json").await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert!(json["error"].is_string());
     assert!(ct.starts_with("application/json"));
@@ -240,7 +293,7 @@ async fn grounding_malformed_json_is_400_json() {
 #[tokio::test]
 async fn tavily_malformed_json_is_400_json() {
     let router = key_router();
-    let (status, json, _) = post_json(&router, "/v1/tavily?api_key=test-secret", "{not json").await;
+    let (status, json, _) = post_json_header(&router, "/v1/tavily", "{not json").await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert!(json["error"].is_string());
 }
@@ -248,7 +301,7 @@ async fn tavily_malformed_json_is_400_json() {
 #[tokio::test]
 async fn grounding_missing_query_is_400_json() {
     let router = key_router();
-    let (status, json, _) = post_json(&router, "/v1/grounding?api_key=test-secret", r#"{}"#).await;
+    let (status, json, _) = post_json_header(&router, "/v1/grounding", r#"{}"#).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     let err = json["error"].as_str().unwrap_or("");
     assert!(err.starts_with("invalid JSON body"), "got {err}");
@@ -258,11 +311,32 @@ async fn grounding_missing_query_is_400_json() {
 #[tokio::test]
 async fn extract_missing_url_is_400_json() {
     let router = key_router();
-    let (status, json, _) = post_json(&router, "/v1/extract?api_key=test-secret", r#"{}"#).await;
+    let (status, json, _) = post_json_header(&router, "/v1/extract", r#"{}"#).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     let err = json["error"].as_str().unwrap_or("");
     assert!(err.starts_with("invalid JSON body"), "got {err}");
     assert!(err.contains("missing field `url`"), "got {err}");
+}
+
+#[tokio::test]
+async fn extract_get_accepts_bearer_header_auth() {
+    let router = key_router();
+    // auth passes with a Bearer token, then validation rejects the missing
+    // url without touching the network
+    let (status, json, _) = get_header(
+        &router,
+        "/v1/extract",
+        "authorization",
+        "Bearer test-secret",
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(
+        json["error"]
+            .as_str()
+            .unwrap_or("")
+            .contains("missing field")
+    );
 }
 
 #[tokio::test]

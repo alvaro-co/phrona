@@ -228,10 +228,37 @@ async fn run_serve(args: &args::ServeArgs, cfg: &PhronaConfig) -> anyhow::Result
         anyhow::Ok(())
     };
 
-    // Join both listeners: a disabled listener resolves immediately and the
-    // other keeps running (a tokio::select! here would exit when the
-    // disabled one completes and kill the server).
-    futures::future::try_join(rest_fut, mcp_fut).await?;
+    match (!args.no_rest, !args.no_mcp) {
+        // Both listeners: SIGTERM/Ctrl+C drains the REST server gracefully
+        // (axum waits for in-flight requests) and then the process exits.
+        // `biased` prefers the completed REST future so the drain is never
+        // preempted by the signal branch.
+        (true, true) => {
+            tokio::select! {
+                biased;
+                r = rest_fut => r?,
+                m = mcp_fut => m?,
+                _ = phrona_api::shutdown_signal() => {}
+            }
+        }
+        (true, false) => {
+            tokio::select! {
+                biased;
+                r = rest_fut => r?,
+                _ = phrona_api::shutdown_signal() => {}
+            }
+        }
+        (false, true) => {
+            tokio::select! {
+                biased;
+                m = mcp_fut => m?,
+                _ = phrona_api::shutdown_signal() => {}
+            }
+        }
+        (false, false) => {
+            anyhow::bail!("nothing to serve: both --no-rest and --no-mcp are set");
+        }
+    }
     Ok(())
 }
 

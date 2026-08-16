@@ -94,9 +94,10 @@ pub async fn search(
     headers: HeaderMap,
     JsonBody(req): JsonBody<TavilyRequest>,
 ) -> AppResult<impl IntoResponse> {
-    let header_key = crate::api_key_from_headers(&headers);
-    let key = req.api_key.as_deref().or(header_key.as_deref());
-    if !state.authorized(key) {
+    // Tavily SDKs pass credentials as `api_key` in the JSON body
+    // (langchain-tavily, llama-index) or as headers; both are honored.
+    let key = crate::auth_key(&headers, req.api_key.as_deref());
+    if !state.authorized(key.as_deref()) {
         return Err(AppError::unauthorized());
     }
 

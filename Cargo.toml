@@ -8,7 +8,7 @@ members = [
     "crates/phrona-cli",
     "examples/rust",
 ]
-default-members = ["crates/phrona"]
+default-members = ["crates/*"]
 
 [workspace.package]
 version = "0.1.0"
@@ -21,7 +21,7 @@ rust-version = "1.85"
 phrona = { path = "crates/phrona", version = "0.1.0" }
 wreq = { version = "6.0.0-rc.29", features = ["cookies", "gzip", "brotli", "zstd", "deflate", "charset", "stream"] }
 wreq-util = { version = "3.0.0-rc.14", features = ["emulation"] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync", "net"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync", "net", "signal"] }
 parking_lot = "0.12"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -38,7 +38,7 @@ clap_complete = "4"
 anyhow = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
-pyo3 = { version = "0.24", features = ["extension-module"] }
+pyo3 = { version = "0.29", features = ["extension-module"] }
 
 [profile.release]
 codegen-units = 1

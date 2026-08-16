@@ -5,14 +5,17 @@ COPY . .
 RUN cargo build --release --locked -p phrona-cli && \
     cp target/release/phrona /phrona
 
-FROM debian:bookworm-slim
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl && \
+FROM debian:bookworm-slimRUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl && \
+    useradd --create-home --shell /usr/sbin/nologin phonrona && \
     rm -rf /var/lib/apt/lists/*
 COPY --from=builder /phrona /usr/local/bin/phrona
 COPY --from=builder /build/frontend /usr/share/phrona/frontend
 ENV PHRONA_ADDR=0.0.0.0:8080
 ENV PHRONA_FRONTEND_DIR=/usr/share/phrona/frontend
 EXPOSE 8080
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s \
-    CMD curl -fsS http://127.0.0.1:8080/health || exit 1
-ENTRYPOINT ["phrona", "serve", "--no-mcp"]
+# Run as an unprivileged user: the API never writes to the filesystem, so
+# the least-privileged identity is the safest default.
+USER phonrona
+HEALTHCHECK --interval=30s --timeout=3s --retries=3 \
+    CMD curl -f http://localhost:8080/health || exit 1
+ENTRYPOINT ["/usr/local/bin/phrona", "serve"]

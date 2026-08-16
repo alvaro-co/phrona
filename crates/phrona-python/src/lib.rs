@@ -12,6 +12,7 @@ use std::time::Duration;
 
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
+use pyo3::types::{PyDict, PyList};
 
 use phrona_core::{Category, Profile, SearchClient, SearchOptions};
 
@@ -52,41 +53,42 @@ fn parse_category(s: &str) -> PyResult<Category> {
     })
 }
 
-fn to_py(v: &impl serde::Serialize) -> PyResult<PyObject> {
+fn to_py(v: &impl serde::Serialize) -> PyResult<Py<PyAny>> {
     let j =
         serde_json::to_value(v).map_err(|e| PyValueError::new_err(format!("serialize: {e}")))?;
-    Python::with_gil(|py| json_to_py(py, &j))
+    Python::attach(|py| json_to_py(py, &j))
 }
 
 /// Convert a serde_json::Value into the matching Python object.
-fn json_to_py(py: Python<'_>, v: &serde_json::Value) -> PyResult<PyObject> {
-    use pyo3::types::{PyBool, PyDict, PyFloat, PyInt, PyList, PyString};
-    let o: PyObject = match v {
+fn json_to_py(py: Python<'_>, v: &serde_json::Value) -> PyResult<Py<PyAny>> {
+    let o: Py<PyAny> = match v {
         serde_json::Value::Null => py.None(),
-        serde_json::Value::Bool(b) => PyBool::new(py, *b).to_owned().into(),
+        serde_json::Value::Bool(b) => (*b).into_pyobject(py)?.to_owned().into_any().unbind(),
         serde_json::Value::Number(n) => {
             if let Some(i) = n.as_i64() {
-                PyInt::new(py, i).to_owned().into()
+                i.into_pyobject(py)?.into_any().unbind()
             } else {
-                PyFloat::new(py, n.as_f64().unwrap_or(0.0))
-                    .to_owned()
-                    .into()
+                n.as_f64()
+                    .unwrap_or(0.0)
+                    .into_pyobject(py)?
+                    .into_any()
+                    .unbind()
             }
         }
-        serde_json::Value::String(s) => PyString::new(py, s).to_owned().into(),
+        serde_json::Value::String(s) => s.into_pyobject(py)?.into_any().unbind(),
         serde_json::Value::Array(items) => {
             let list = PyList::empty(py);
             for item in items {
                 list.append(json_to_py(py, item)?)?;
             }
-            list.to_owned().into()
+            list.into_any().unbind()
         }
         serde_json::Value::Object(map) => {
             let d = PyDict::new(py);
             for (k, val) in map {
                 d.set_item(k, json_to_py(py, val)?)?;
             }
-            d.to_owned().into()
+            d.into_any().unbind()
         }
     };
     Ok(o)
@@ -131,7 +133,7 @@ impl Client {
         language: Option<String>,
         time_range: Option<String>,
         filters: Option<String>,
-    ) -> PyResult<PyObject> {
+    ) -> PyResult<Py<PyAny>> {
         let mut opts = SearchOptions::new(query);
         opts.category = parse_category(category)?;
         opts.engines = engines.unwrap_or_default();
@@ -151,7 +153,7 @@ impl Client {
             .transpose()?;
         opts.filters = filters;
         let resp = py
-            .allow_threads(|| {
+            .detach(|| {
                 RUNTIME
                     .block_on(self.client.search(opts))
                     .map_err(|e| e.to_string())
@@ -169,10 +171,10 @@ impl Client {
         query: &str,
         source: Option<String>,
         region: &str,
-    ) -> PyResult<PyObject> {
+    ) -> PyResult<Py<PyAny>> {
         let http = self.client.http();
         let value = py
-            .allow_threads(|| -> Result<serde_json::Value, String> {
+            .detach(|| -> Result<serde_json::Value, String> {
                 match source {
                     Some(name) => {
                         let s = phrona_core::SuggestSource::from_name(&name).ok_or_else(|| {
@@ -212,9 +214,9 @@ impl Client {
         url: &str,
         max_chars: usize,
         query: Option<&str>,
-    ) -> PyResult<PyObject> {
+    ) -> PyResult<Py<PyAny>> {
         let page = py
-            .allow_threads(|| {
+            .detach(|| {
                 RUNTIME
                     .block_on(phrona_core::extract(
                         self.client.http(),
@@ -230,8 +232,8 @@ impl Client {
 
     /// List available engines per category.
     #[pyo3(signature = (category=None))]
-    fn engines(&self, py: Python<'_>, category: Option<String>) -> PyResult<PyObject> {
-        let out = py.allow_threads(|| {
+    fn engines(&self, py: Python<'_>, category: Option<String>) -> PyResult<Py<PyAny>> {
+        let out = py.detach(|| {
             RUNTIME.block_on(async {
                 let mut out = serde_json::Map::new();
                 let cats: Vec<Category> = match category {
@@ -276,7 +278,7 @@ fn search(
     filters: Option<String>,
     profile: &str,
     timeout: f64,
-) -> PyResult<PyObject> {
+) -> PyResult<Py<PyAny>> {
     let client = build_client(profile, timeout)?;
     client.search(
         py,
@@ -301,21 +303,26 @@ fn suggest(
     query: &str,
     source: Option<String>,
     region: &str,
-) -> PyResult<PyObject> {
+) -> PyResult<Py<PyAny>> {
     build_client("chrome", 15.0)?.suggest(py, query, source, region)
 }
 
 /// One-shot page extraction with a default client.
 #[pyfunction]
 #[pyo3(signature = (url, max_chars=8000, query=None))]
-fn extract(py: Python<'_>, url: &str, max_chars: usize, query: Option<&str>) -> PyResult<PyObject> {
+fn extract(
+    py: Python<'_>,
+    url: &str,
+    max_chars: usize,
+    query: Option<&str>,
+) -> PyResult<Py<PyAny>> {
     build_client("chrome", 15.0)?.extract(py, url, max_chars, query)
 }
 
 /// One-shot engines listing with a default client.
 #[pyfunction]
 #[pyo3(signature = (category=None))]
-fn engines(py: Python<'_>, category: Option<String>) -> PyResult<PyObject> {
+fn engines(py: Python<'_>, category: Option<String>) -> PyResult<Py<PyAny>> {
     build_client("chrome", 15.0)?.engines(py, category)
 }
 

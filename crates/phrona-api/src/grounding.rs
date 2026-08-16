@@ -8,15 +8,27 @@ use serde::{Deserialize, Serialize};
 use phrona::SearchOptions;
 use phrona::models::{Category, TimeRange};
 
-use crate::{AppError, AppResult, AppState, JsonBody, JsonQuery};
+use crate::{AppError, AppResult, AppState, HeaderAuth, JsonBody, JsonQuery};
 
-/// AI grounding endpoint: returns the top sources plus an extractive
-/// answer for a query, ready for retrieval-augmented generation.
+/// POST /v1/grounding - AI grounding request; credentials via headers or
+/// the JSON body.
 #[derive(Deserialize)]
 pub struct GroundingRequest {
     pub query: String,
     #[serde(default)]
     pub api_key: Option<String>,
+    #[serde(default)]
+    pub max_results: Option<usize>,
+    #[serde(default)]
+    pub category: Option<String>,
+    #[serde(default)]
+    pub time_range: Option<String>,
+}
+
+/// GET /v1/grounding?query=... - same feature; auth is header-only.
+#[derive(Deserialize)]
+pub struct GroundingGetParams {
+    pub query: String,
     #[serde(default)]
     pub max_results: Option<usize>,
     #[serde(default)]
@@ -74,35 +86,57 @@ fn synthesize_answer(resp: &phrona::SearchResponse, sources: &[GroundingSource])
 
 pub async fn get(
     State(state): State<Arc<AppState>>,
-    JsonQuery(p): JsonQuery<GroundingRequest>,
+    auth: HeaderAuth,
+    JsonQuery(p): JsonQuery<GroundingGetParams>,
 ) -> AppResult<impl IntoResponse> {
-    if !state.authorized(p.api_key.as_deref()) {
+    if !state.authorized(auth.key()) {
         return Err(AppError::unauthorized());
     }
-    run(&state, &p).await
+    run(
+        &state,
+        &p.query,
+        p.max_results,
+        p.category.as_deref(),
+        p.time_range.as_deref(),
+    )
+    .await
 }
 
 pub async fn post(
     State(state): State<Arc<AppState>>,
+    headers: axum::http::HeaderMap,
     JsonBody(p): JsonBody<GroundingRequest>,
 ) -> AppResult<impl IntoResponse> {
-    if !state.authorized(p.api_key.as_deref()) {
+    if !state.authorized(crate::auth_key(&headers, p.api_key.as_deref()).as_deref()) {
         return Err(AppError::unauthorized());
     }
-    run(&state, &p).await
+    run(
+        &state,
+        &p.query,
+        p.max_results,
+        p.category.as_deref(),
+        p.time_range.as_deref(),
+    )
+    .await
 }
 
-async fn run(state: &AppState, p: &GroundingRequest) -> AppResult<Json<GroundingResponse>> {
-    let mut opts = SearchOptions::new(p.query.clone());
-    opts.max_results = p.max_results.unwrap_or(10).clamp(1, 50);
-    if let Some(c) = &p.category {
+async fn run(
+    state: &AppState,
+    query: &str,
+    max_results: Option<usize>,
+    category: Option<&str>,
+    time_range: Option<&str>,
+) -> AppResult<Json<GroundingResponse>> {
+    let mut opts = SearchOptions::new(query.to_string());
+    opts.max_results = max_results.unwrap_or(10).clamp(1, 50);
+    if let Some(c) = category {
         opts.category = c.parse::<Category>().map_err(|_| {
             AppError::bad_request(
                 "invalid category, expected one of: web, images, news, videos, books",
             )
         })?;
     }
-    if let Some(t) = &p.time_range {
+    if let Some(t) = time_range {
         opts.time_range = Some(t.parse::<TimeRange>().map_err(|_| {
             AppError::bad_request("invalid time_range, expected day|week|month|year")
         })?);

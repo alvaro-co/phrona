@@ -18,6 +18,39 @@ use crate::rank::{calculate_score, query_terms, rank};
 /// `search.concurrency_limit`).
 const MAX_CONCURRENT_ENGINES: usize = 8;
 
+/// Observes completed engine requests. Implemented by higher layers (e.g.
+/// the REST API's Prometheus metrics); the default is a no-op so libraries
+/// and CLI tools never pay for telemetry they don't serve.
+///
+/// `status` is one of `ok`, `empty` or `error`. `scope`/`kind` describe the
+/// failure reason and are `None` on success.
+pub trait EngineObserver: Send + Sync {
+    fn on_engine_done(
+        &self,
+        engine: &str,
+        status: &str,
+        scope: Option<&str>,
+        kind: Option<&str>,
+        elapsed: std::time::Duration,
+    );
+}
+
+/// Default observer that does nothing.
+#[derive(Default)]
+pub struct NoopEngineObserver;
+
+impl EngineObserver for NoopEngineObserver {
+    fn on_engine_done(
+        &self,
+        _engine: &str,
+        _status: &str,
+        _scope: Option<&str>,
+        _kind: Option<&str>,
+        _elapsed: std::time::Duration,
+    ) {
+    }
+}
+
 /// High-level search client. Shares a persistent pool of impersonated HTTP
 /// clients (one per proxy) across engines; each engine task is pinned to one
 /// client so multi-step flows keep the same proxy and cookie jar.
@@ -25,6 +58,7 @@ pub struct SearchClient {
     pool: ProxyPool,
     shared: Arc<EngineShared>,
     concurrency: usize,
+    observer: Arc<dyn EngineObserver>,
 }
 
 impl SearchClient {
@@ -44,6 +78,7 @@ impl SearchClient {
             pool,
             shared: Arc::new(EngineShared::new()),
             concurrency: MAX_CONCURRENT_ENGINES,
+            observer: Arc::new(NoopEngineObserver),
         })
     }
 
@@ -62,6 +97,13 @@ impl SearchClient {
     /// The configured per-search engine concurrency cap.
     pub fn concurrency_limit(&self) -> usize {
         self.concurrency
+    }
+
+    /// Attach an observer notified after every engine request completes
+    /// (`ok` / `empty` / `error` plus scope, kind and elapsed time).
+    pub fn with_observer(mut self, observer: Arc<dyn EngineObserver>) -> Self {
+        self.observer = observer;
+        self
     }
 
     /// The first (or only) pooled client — used by non-engine flows such as
@@ -108,9 +150,10 @@ impl SearchClient {
                     opts,
                     shared: &shared,
                 };
+                let started = Instant::now();
                 let _permit = sem.acquire().await.expect("semaphore closed");
                 let r = engine.search(&ctx).await;
-                (engine.name(), r)
+                (engine.name(), r, started.elapsed())
             }
         });
         let mut in_flight = FuturesUnordered::from_iter(futs);
@@ -121,7 +164,7 @@ impl SearchClient {
             let mut reports: Vec<EngineReport> = Vec::new();
             let mut any_ok = false;
 
-            while let Some((name, result)) = in_flight.next().await {
+            while let Some((name, result, elapsed)) = in_flight.next().await {
                 if Instant::now() >= deadline {
                     drop(in_flight);
                     break;
@@ -130,6 +173,8 @@ impl SearchClient {
                     Ok(items) => {
                         any_ok = true;
                         if items.is_empty() {
+                            self.observer
+                                .on_engine_done(name, "empty", None, None, elapsed);
                             reports.push(EngineReport {
                                 name: name.to_string(),
                                 status: "empty".into(),
@@ -141,6 +186,8 @@ impl SearchClient {
                             continue;
                         }
                         let n = items.len();
+                        self.observer
+                            .on_engine_done(name, "ok", None, None, elapsed);
                         let (answers_part, raw_part): (Vec<_>, Vec<_>) =
                             items.into_iter().partition(|r| r.url.is_empty());
                         answers.extend(answers_part);
@@ -155,13 +202,22 @@ impl SearchClient {
                         });
                     }
                     Err(e) => {
+                        let scope = format!("{:?}", e.scope());
+                        let kind = format!("{:?}", e.kind());
+                        self.observer.on_engine_done(
+                            name,
+                            "error",
+                            Some(&scope),
+                            Some(&kind),
+                            elapsed,
+                        );
                         reports.push(EngineReport {
                             name: name.to_string(),
                             status: "error".into(),
                             results: 0,
                             error: Some(e.to_string()),
-                            scope: Some(format!("{:?}", e.scope())),
-                            kind: Some(format!("{:?}", e.kind())),
+                            scope: Some(scope),
+                            kind: Some(kind),
                         });
                     }
                 }
