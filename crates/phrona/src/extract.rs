@@ -148,6 +148,12 @@ pub async fn extract(
         let host = parsed
             .host()
             .ok_or_else(|| Error::invalid_query("extract", "URL has no host"))?;
+        if !client.target_policy().domain_allowed(&host.to_string()) {
+            return Err(Error::invalid_query(
+                "extract",
+                "target host is blocked by the domain allow/deny policy",
+            ));
+        }
         let port = parsed
             .port_or_known_default()
             .ok_or_else(|| Error::invalid_query("extract", "URL has no port"))?;
@@ -274,16 +280,23 @@ fn collect_text(node: &scraper::ElementRef) -> String {
 }
 
 /// Extract several pages in parallel (used by AI grounding endpoints).
+/// Concurrency is bounded so a large batch cannot spawn unbounded
+/// outbound connections; results are returned in input order.
 pub async fn extract_many(
     client: &HttpClient,
     urls: &[String],
     max_chars: usize,
     query: Option<&str>,
 ) -> Vec<Result<ExtractedPage>> {
-    let futs = urls
-        .iter()
-        .map(|url| async move { extract(client, url, max_chars, query).await });
-    futures::future::join_all(futs).await
+    const CONCURRENCY: usize = 16;
+    let mut out = Vec::with_capacity(urls.len());
+    for chunk in urls.chunks(CONCURRENCY) {
+        let batch = chunk
+            .iter()
+            .map(|url| extract(client, url, max_chars, query));
+        out.extend(futures::future::join_all(batch).await);
+    }
+    out
 }
 
 #[cfg(test)]

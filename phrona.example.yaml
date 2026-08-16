@@ -1,4 +1,4 @@
-# phonona.example.yaml — typed configuration for all Phrona surfaces.
+# phrona.example.yaml — typed configuration for all Phrona surfaces.
 #
 # Copy to `phrona.yaml` (or point $PHRONA_CONFIG_PATH at it) to use it.
 # Every key is optional: absent keys fall back to the defaults below.

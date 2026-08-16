@@ -109,6 +109,7 @@ impl Client {
             parse_profile(profile)?,
             Some(Duration::from_secs_f64(timeout.max(1.0))),
             None,
+            phrona_core::TargetPolicy::default(),
         )
         .map_err(|e| PyValueError::new_err(e.to_string()))?;
         Ok(Self { client })

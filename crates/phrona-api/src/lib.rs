@@ -80,6 +80,13 @@ impl AppState {
             return true;
         }
         let mut rate = self.rate.lock();
+        // Bounded memory: under public traffic (or IPv6 address rotation) the
+        // per-IP bucket map would otherwise grow forever. Once it exceeds a
+        // threshold, sweep windows whose 60s window has already elapsed.
+        const RATE_BUCKET_LIMIT: usize = 10_000;
+        if rate.len() > RATE_BUCKET_LIMIT {
+            rate.retain(|_, w| w.started.elapsed() < Duration::from_secs(60));
+        }
         let window = rate.entry(ip).or_insert(RateWindow {
             started: Instant::now(),
             count: 0,

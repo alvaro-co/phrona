@@ -55,8 +55,9 @@ qsa("#tool-tabs .tab").forEach((tab) =>
 
 const state = { category: "web", engines: new Set(), allEngines: {}, busy: false };
 
-/* API key: stored locally, sent as x-api-key header + api_key param.
-   The server accepts both; engines routes ignore it. */
+/* API key: stored locally, sent only as the x-api-key header. The API
+   rejects api_key in the query string (credential leakage into logs and
+   referrers), so it must never appear in URLs or the saved-location hash. */
 const apiKey = () => $("api-key").value.trim();
 $("api-key").addEventListener("input", () =>
   localStorage.setItem("phrona-key", apiKey()));
@@ -71,7 +72,6 @@ const buildParams = () => {
     max_results: $("max-results").value || "20",
     page: $("page").value || "1",
   });
-  if (apiKey()) p.set("api_key", apiKey());
   if (state.engines.size) p.set("engines", [...state.engines].join(","));
   for (const id of ["region", "language", "filters"]) {
     const v = $(id).value.trim();

@@ -175,11 +175,13 @@ pub async fn search(
 
     if req.include_raw_content {
         let client = state.client.http();
-        for r in &mut results {
-            match phrona::extract(client, &r.url, 8000, Some(&req.query)).await {
-                Ok(page) => r.raw_content = Some(page.text),
-                Err(e) => r.raw_content = Some(format!("extract failed: {e}")),
-            }
+        let urls: Vec<String> = results.iter().map(|r| r.url.clone()).collect();
+        let pages = phrona::extract_many(client, &urls, 8000, Some(&req.query)).await;
+        for (r, page) in results.iter_mut().zip(pages) {
+            r.raw_content = Some(match page {
+                Ok(p) => p.text,
+                Err(e) => format!("extract failed: {e}"),
+            });
         }
     }
 
