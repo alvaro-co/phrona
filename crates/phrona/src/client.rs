@@ -139,12 +139,13 @@ impl HttpClient {
     /// Single-hop GET with redirects disabled. The caller is responsible for
     /// following (and validating) any redirect itself — used by SSRF-guarded
     /// flows such as `extract`.
-    pub async fn get_no_redirect(&self, url: &str, headers: &HeaderMap) -> Result<wreq::Response> {
-        let mut rb = self.client.get(url).redirect(redirect::Policy::none());
-        for (k, v) in headers {
-            rb = rb.header(k, v);
-        }
-        Ok(rb.send().await?)
+    pub async fn get_no_redirect(&self, url: &str) -> Result<wreq::Response> {
+        Ok(self
+            .client
+            .get(url)
+            .redirect(redirect::Policy::none())
+            .send()
+            .await?)
     }
 
     pub async fn get_with_headers(&self, url: &str, headers: &HeaderMap) -> Result<wreq::Response> {

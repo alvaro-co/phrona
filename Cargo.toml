@@ -19,7 +19,7 @@ rust-version = "1.85"
 
 [workspace.dependencies]
 phrona = { path = "crates/phrona", version = "0.1.0" }
-wreq = { version = "6.0.0-rc.29", features = ["cookies", "gzip", "brotli", "zstd", "deflate", "charset"] }
+wreq = { version = "6.0.0-rc.29", features = ["cookies", "gzip", "brotli", "zstd", "deflate", "charset", "stream"] }
 wreq-util = { version = "3.0.0-rc.14", features = ["emulation"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync", "net"] }
 serde = { version = "1", features = ["derive"] }
@@ -42,3 +42,11 @@ pyo3 = { version = "0.24", features = ["extension-module"] }
 codegen-units = 1
 lto = "thin"
 strip = true
+
+[profile.dev]
+opt-level = 0
+debug = 1
+split-debuginfo = "unpacked"
+
+[profile.dev.package."*"]
+opt-level = 2
