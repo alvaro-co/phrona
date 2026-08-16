@@ -1,30 +1,52 @@
 mod args;
 mod output;
 
+use std::time::Duration;
+
 use anyhow::Result;
 use clap::Parser;
 use serde_json::json;
 
 use phrona::SuggestSource;
-use phrona::models::ResultItem;
+use phrona::config::PhronaConfig;
 
 use args::{Cli, Command, TestArgs};
+
+/// Load the typed configuration; a broken file degrades to defaults with a
+/// warning so the CLI stays usable.
+fn load_config() -> PhronaConfig {
+    match PhronaConfig::load() {
+        Ok(cfg) => cfg,
+        Err(e) => {
+            eprintln!("config warning: {e}");
+            PhronaConfig::defaults()
+        }
+    }
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
+    let cfg = load_config();
+    let profile = cli.profile.unwrap_or_else(|| cfg.profile());
+    let timeout = Duration::from_secs(cli.timeout.unwrap_or(cfg.search.timeout_secs));
+    let proxies = if cli.proxy.is_empty() {
+        cfg.engines.proxies.clone()
+    } else {
+        cli.proxy.clone()
+    };
     let client = phrona::SearchClient::with_options(
-        cli.profile,
-        Some(std::time::Duration::from_secs(cli.timeout)),
-        (!cli.proxy.is_empty()).then(|| cli.proxy.clone()),
+        profile,
+        Some(timeout),
+        (!proxies.is_empty()).then_some(proxies),
     )?;
 
     match &cli.command {
         Command::Search(args) => {
-            let mut opts = cli.base_options(&args.query);
+            let mut opts = cli.base_options(timeout, &args.query);
             opts.category = args.category;
             opts.engines = split_engines(args.engines.as_deref());
-            opts.max_results = args.max_results.clamp(1, 100);
+            opts.max_results = args.max_results.clamp(1, cfg.max_results_limit());
             opts.safesearch = args.safesearch;
             opts.region = args.region.clone();
             opts.language = args.language.clone();
@@ -105,8 +127,8 @@ async fn main() -> Result<()> {
             }
         }
         Command::Ground(args) => {
-            let mut opts = cli.base_options(&args.query);
-            opts.max_results = args.max_results.clamp(1, 100);
+            let mut opts = cli.base_options(timeout, &args.query);
+            opts.max_results = args.max_results.clamp(1, cfg.max_results_limit());
             opts.engines = split_engines(args.engines.as_deref());
             opts.category = args.category;
             opts.region = args.region.clone();
@@ -144,14 +166,14 @@ async fn main() -> Result<()> {
             }
         }
         Command::Test(args) => {
-            run_test(&cli, &client, args).await?;
+            run_test(&cli, &client, args, timeout).await?;
         }
         Command::Serve(args) => {
-            run_serve(args).await?;
+            run_serve(args, &cfg).await?;
         }
         Command::Mcp => {
             init_tracing();
-            phrona_mcp::run_stdio().await?;
+            phrona_mcp::run_stdio(&cfg).await?;
         }
         Command::Completions(args) => {
             args::print_completions(&args.shell)?;
@@ -167,28 +189,33 @@ fn init_tracing() {
         .init();
 }
 
-/// Full server: REST API (axum) plus MCP-over-TCP, in one process.
-async fn run_serve(args: &args::ServeArgs) -> anyhow::Result<()> {
+/// Full server: REST API (axum) plus MCP-over-TCP, in one process. Addresses
+/// and the API key default to `server.bind_addr` / `server.mcp_addr` /
+/// `server.api_key` from the config (env overrides included).
+async fn run_serve(args: &args::ServeArgs, cfg: &PhronaConfig) -> anyhow::Result<()> {
     init_tracing();
-    let api_key = args.api_key.clone().or_else(|| {
-        std::env::var("PHRONA_API_KEY")
-            .ok()
-            .filter(|k| !k.is_empty())
-    });
+    let mut cfg = cfg.clone();
+    if let Some(k) = &args.api_key {
+        cfg.server.api_key = Some(k.clone());
+    }
 
     let rest_addr = match &args.addr {
         Some(a) => a.parse()?,
         None => std::env::var("PHRONA_ADDR")
             .ok()
+            .filter(|a| !a.is_empty())
             .map(|a| a.parse())
             .transpose()?
-            .unwrap_or_else(phrona_api::default_addr),
+            .unwrap_or(cfg.bind_addr()?),
     };
-    let mcp_addr = args.mcp_addr.clone();
+    let mcp_addr = args
+        .mcp_addr
+        .clone()
+        .unwrap_or_else(|| cfg.server.mcp_addr.clone());
 
     let rest_fut = async {
         if !args.no_rest {
-            phrona_api::serve(rest_addr, api_key.clone()).await?;
+            phrona_api::serve(rest_addr, cfg.clone()).await?;
         }
         anyhow::Ok(())
     };
@@ -196,7 +223,7 @@ async fn run_serve(args: &args::ServeArgs) -> anyhow::Result<()> {
         if !args.no_mcp {
             let listener = phrona_mcp::tcp_listener(&mcp_addr).await?;
             tracing::info!("phrona-mcp listening on tcp://{mcp_addr} (newline-delimited JSON-RPC)");
-            phrona_mcp::serve_tcp(listener).await?;
+            phrona_mcp::serve_tcp(listener, cfg.clone()).await?;
         }
         anyhow::Ok(())
     };
@@ -233,64 +260,25 @@ fn split_sources(s: Option<&str>) -> anyhow::Result<Vec<SuggestSource>> {
 }
 
 fn print_json(resp: &phrona::SearchResponse) {
-    println!("{}", search_json(resp));
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&search_json(resp)).expect("serialize response")
+    );
 }
 
-/// Machine-readable JSON for a search response. Pure (no stdout), so the
+/// Machine-readable JSON for a search response: the canonical serde
+/// serialization of [`phrona::SearchResponse`]. Pure (no stdout), so the
 /// exact payload is unit-testable.
 fn search_json(resp: &phrona::SearchResponse) -> serde_json::Value {
-    let results: Vec<_> = resp
-        .results
-        .iter()
-        .enumerate()
-        .map(|(i, r)| {
-            let pos = (i + 1) as f64;
-            let score = (1.0 - (pos - 1.0) * 0.05).max(0.05);
-            match r {
-                ResultItem::Web(w) => json!({
-                    "type": "web", "title": w.title, "url": w.url,
-                    "description": w.description, "score": w.score, "position": pos,
-                    "engines": w.engines,
-                }),
-                ResultItem::Image(im) => json!({
-                    "type": "image", "title": im.title, "url": im.url,
-                    "image_url": im.image_url, "thumbnail_url": im.thumbnail_url,
-                    "width": im.width, "height": im.height, "score": score, "position": pos,
-                    "engines": im.engines,
-                }),
-                ResultItem::News(n) => json!({
-                    "type": "news", "title": n.title, "url": n.url,
-                    "description": n.description, "published": n.published,
-                    "source": n.source, "score": score, "position": pos, "engines": n.engines,
-                }),
-                ResultItem::Video(v) => json!({
-                    "type": "video", "title": v.title, "url": v.url,
-                    "description": v.description, "thumbnail_url": v.thumbnail_url,
-                    "duration": v.duration, "views": v.views, "uploader": v.uploader,
-                    "score": score, "position": pos, "engines": v.engines,
-                }),
-                ResultItem::Book(b) => json!({
-                    "type": "book", "title": b.title, "url": b.url,
-                    "author": b.author, "publisher": b.publisher, "info": b.info,
-                    "score": score, "position": pos, "engines": b.engines,
-                }),
-            }
-        })
-        .collect();
-    json!({
-        "query": resp.query,
-        "category": resp.category.as_str(),
-        "page": resp.page,
-        "total": resp.total,
-        "results": results,
-        "suggestions": resp.suggestions,
-        "answer": resp.answer,
-        "engines": resp.engines,
-        "elapsed_ms": resp.elapsed_ms,
-    })
+    serde_json::to_value(resp).expect("search response is serializable")
 }
 
-async fn run_test(cli: &Cli, client: &phrona::SearchClient, args: &TestArgs) -> Result<()> {
+async fn run_test(
+    cli: &Cli,
+    client: &phrona::SearchClient,
+    args: &TestArgs,
+    timeout: Duration,
+) -> Result<()> {
     let cats: Vec<phrona::Category> = match args.category {
         Some(c) => vec![c],
         None => phrona::Category::ALL.to_vec(),
@@ -298,7 +286,7 @@ async fn run_test(cli: &Cli, client: &phrona::SearchClient, args: &TestArgs) -> 
     let mut reports = Vec::new();
     let mut any_success = false;
     for cat in cats {
-        let mut opts = cli.base_options(&args.query);
+        let mut opts = cli.base_options(timeout, &args.query);
         opts.category = cat;
         opts.max_results = args.max_results.clamp(1, 10);
         match client.search(opts).await {
@@ -373,7 +361,7 @@ mod tests {
     }
 
     #[test]
-    fn json_score_matches_rest_formula() {
+    fn json_is_canonical_serde_serialization() {
         let resp = phrona::SearchResponse {
             query: "q".into(),
             category: phrona::Category::Web,
@@ -407,9 +395,11 @@ mod tests {
             elapsed_ms: 1,
         };
         let v = search_json(&resp);
-        assert_eq!(v["results"][0]["position"], 1.0);
+        // identical to the derive-based canonical serialization
+        assert_eq!(v, serde_json::to_value(&resp).unwrap());
+        assert_eq!(v["results"][0]["position"], 1);
         assert_eq!(v["results"][0]["score"], 1.0);
-        // image results carry the same score formula as the REST API
+        // every variant serializes through the same tagged enum
         assert_eq!(v["results"][1]["type"], "image");
         assert_eq!(v["results"][1]["score"], 0.95);
         assert_eq!(v["results"][1]["image_url"], "https://img");

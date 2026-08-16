@@ -11,7 +11,7 @@ use rmcp::{ServiceExt, tool};
 use schemars::JsonSchema;
 
 use phrona::models::{Category, TimeRange};
-use phrona::{ResultItem, SearchClient, SearchOptions};
+use phrona::{PhronaConfig, ResultItem, SearchClient, SearchOptions};
 
 #[derive(Debug, serde::Deserialize, JsonSchema)]
 struct SearchParams {
@@ -83,18 +83,26 @@ struct EnginesParams {
 #[derive(Clone)]
 struct PhronaMcp {
     client: std::sync::Arc<SearchClient>,
+    max_results_limit: usize,
 }
 
 impl PhronaMcp {
-    fn new() -> Self {
+    /// Build the server from a typed config: profile, timeout, proxies and
+    /// the `max_results` clamp all come from it.
+    fn with_config(cfg: &PhronaConfig) -> Self {
         Self {
-            client: std::sync::Arc::new(SearchClient::new().expect("build search client")),
+            client: std::sync::Arc::new(cfg.search_client().expect("build search client")),
+            max_results_limit: cfg.max_results_limit(),
         }
     }
 
     /// Map tool arguments to search options; invalid enums are rejected
     /// loudly instead of silently coerced.
-    fn build_opts(p: &SearchParams, category: Category) -> Result<SearchOptions, String> {
+    fn build_opts(
+        p: &SearchParams,
+        category: Category,
+        max_results_limit: usize,
+    ) -> Result<SearchOptions, String> {
         let mut opts = SearchOptions::new(p.query.clone());
         opts.category = category;
         if let Some(es) = &p.engines {
@@ -106,7 +114,7 @@ impl PhronaMcp {
                 .collect();
         }
         if let Some(m) = p.max_results {
-            opts.max_results = m.clamp(1, 100);
+            opts.max_results = m.clamp(1, max_results_limit);
         }
         opts.region = p.region.clone();
         opts.language = p.language.clone();
@@ -129,25 +137,12 @@ impl PhronaMcp {
     }
 
     async fn run_search(&self, p: &SearchParams, category: Category) -> String {
-        let opts = match Self::build_opts(p, category) {
+        let opts = match Self::build_opts(p, category, self.max_results_limit) {
             Ok(opts) => opts,
             Err(msg) => return serde_json::json!({"error": msg}).to_string(),
         };
         match self.client.search(opts).await {
-            Ok(resp) => {
-                let items: Vec<serde_json::Value> = resp
-                    .results
-                    .iter()
-                    .map(|r| serde_json::to_value(r).unwrap_or(serde_json::Value::Null))
-                    .collect();
-                serde_json::to_string_pretty(&serde_json::json!({
-                    "query": resp.query,
-                    "total": resp.total,
-                    "results": items,
-                    "suggestions": resp.suggestions,
-                }))
-                .unwrap_or_else(|e| e.to_string())
-            }
+            Ok(resp) => serde_json::to_string_pretty(&resp).unwrap_or_else(|e| e.to_string()),
             Err(e) => serde_json::json!({"error": e.to_string()}).to_string(),
         }
     }
@@ -262,7 +257,7 @@ impl PhronaMcp {
         description = "Grounded search for RAG: returns a synthesized answer plus ranked sources with content. Prefer this over web_search + fetch_page for single-shot questions."
     )]
     async fn search_grounded(&self, Parameters(p): Parameters<SearchParams>) -> String {
-        let opts = match Self::build_opts(&p, Category::Web) {
+        let opts = match Self::build_opts(&p, Category::Web, self.max_results_limit) {
             Ok(opts) => opts,
             Err(msg) => return serde_json::json!({"error": msg}).to_string(),
         };
@@ -312,8 +307,8 @@ impl PhronaMcp {
 
 /// Serve the MCP server over stdio (JSON-RPC 2.0, newline-delimited).
 /// Blocks until the client disconnects.
-pub async fn run_stdio() -> anyhow::Result<()> {
-    let service = PhronaMcp::new();
+pub async fn run_stdio(cfg: &PhronaConfig) -> anyhow::Result<()> {
+    let service = PhronaMcp::with_config(cfg);
     let server = service.serve(stdio()).await?;
     let _ = server.waiting().await?;
     Ok(())
@@ -322,12 +317,13 @@ pub async fn run_stdio() -> anyhow::Result<()> {
 /// Serve the MCP server over a TCP listener (newline-delimited JSON-RPC,
 /// the same framing as stdio). Each connection is served in its own task.
 /// Blocks until the listener is closed.
-pub async fn serve_tcp(listener: tokio::net::TcpListener) -> anyhow::Result<()> {
+pub async fn serve_tcp(listener: tokio::net::TcpListener, cfg: PhronaConfig) -> anyhow::Result<()> {
     tracing::info!("phrona-mcp listening on {}", listener.local_addr()?);
     loop {
         let (socket, _) = listener.accept().await?;
+        let cfg = cfg.clone();
         tokio::spawn(async move {
-            let service = PhronaMcp::new();
+            let service = PhronaMcp::with_config(&cfg);
             match service.serve(socket).await {
                 Ok(server) => {
                     let _ = server.waiting().await;
@@ -363,7 +359,7 @@ mod tests {
 
     #[test]
     fn build_opts_defaults() {
-        let opts = PhronaMcp::build_opts(&params("rust"), Category::Web).unwrap();
+        let opts = PhronaMcp::build_opts(&params("rust"), Category::Web, 100).unwrap();
         assert_eq!(opts.category, Category::Web);
         assert_eq!(opts.max_results, 20);
         assert_eq!(opts.safesearch, phrona::SafeSearch::Moderate);
@@ -375,8 +371,8 @@ mod tests {
         let mut p = params("rust");
         p.max_results = Some(5000);
         p.page = Some(0);
-        let opts = PhronaMcp::build_opts(&p, Category::News).unwrap();
-        assert_eq!(opts.max_results, 100);
+        let opts = PhronaMcp::build_opts(&p, Category::News, 50).unwrap();
+        assert_eq!(opts.max_results, 50);
         assert_eq!(opts.page, 1);
         assert_eq!(opts.category, Category::News);
     }
@@ -385,11 +381,11 @@ mod tests {
     fn build_opts_rejects_bad_enums() {
         let mut p = params("rust");
         p.time_range = Some("yesterday".into());
-        assert!(PhronaMcp::build_opts(&p, Category::Web).is_err());
+        assert!(PhronaMcp::build_opts(&p, Category::Web, 100).is_err());
         p.time_range = None;
         p.safesearch = Some("medium".into());
-        assert!(PhronaMcp::build_opts(&p, Category::Web).is_err());
+        assert!(PhronaMcp::build_opts(&p, Category::Web, 100).is_err());
         p.safesearch = Some("strict".into());
-        assert!(PhronaMcp::build_opts(&p, Category::Web).is_ok());
+        assert!(PhronaMcp::build_opts(&p, Category::Web, 100).is_ok());
     }
 }

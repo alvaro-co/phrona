@@ -3,16 +3,18 @@ pub mod grounding;
 pub mod tavily;
 pub mod tools;
 
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use axum::extract::rejection::QueryRejection;
-use axum::extract::{FromRequest, FromRequestParts, Query, Request, State};
+use axum::extract::{ConnectInfo, FromRequest, FromRequestParts, Query, Request, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
+use parking_lot::Mutex;
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
@@ -21,26 +23,79 @@ use tower_http::trace::TraceLayer;
 
 use phrona::engine;
 use phrona::error::{ErrorKind as PhronaErrorKind, ErrorScope};
-use phrona::models::{Category, ResultItem, SearchResponse, TimeRange};
-use phrona::{SearchClient, SearchOptions, suggest, suggest_all};
+use phrona::models::{Category, SearchResponse, TimeRange};
+use phrona::{PhronaConfig, SearchClient, SearchOptions, suggest, suggest_all};
+
+/// Fixed-window rate-limit bucket for one client.
+struct RateWindow {
+    started: Instant,
+    count: u32,
+}
 
 pub struct AppState {
     pub client: SearchClient,
     pub started: Instant,
     pub api_key: Option<String>,
+    /// Upper bound applied to `max_results` (from `search.max_results_limit`).
+    pub max_results_limit: usize,
+    /// Requests allowed per window per client; `0` disables the limiter.
+    pub rate_limit_per_minute: u32,
+    /// Maximum accepted request body size in bytes.
+    pub max_body_bytes: u64,
+    rate: Mutex<HashMap<Option<SocketAddr>, RateWindow>>,
 }
 
 impl AppState {
-    pub fn new(client: SearchClient, api_key: Option<String>) -> Self {
+    pub fn new(
+        client: SearchClient,
+        api_key: Option<String>,
+        max_results_limit: usize,
+        rate_limit_per_minute: u32,
+        max_body_bytes: u64,
+    ) -> Self {
         Self {
             client,
             started: Instant::now(),
             api_key,
+            max_results_limit,
+            rate_limit_per_minute,
+            max_body_bytes,
+            rate: Mutex::new(HashMap::new()),
         }
     }
 
     pub fn authorized(&self, key: Option<&str>) -> bool {
         self.api_key.as_deref().is_none_or(|want| key == Some(want))
+    }
+
+    /// Fixed-window rate limit keyed on the client IP (falling back to a
+    /// single global bucket when the client address is unknown, e.g. in
+    /// unit tests). Returns `true` when the request is allowed.
+    pub fn check_rate(&self, ip: Option<SocketAddr>) -> bool {
+        if self.rate_limit_per_minute == 0 {
+            return true;
+        }
+        let mut rate = self.rate.lock();
+        let window = rate.entry(ip).or_insert(RateWindow {
+            started: Instant::now(),
+            count: 0,
+        });
+        if window.started.elapsed() >= Duration::from_secs(60) {
+            window.started = Instant::now();
+            window.count = 0;
+        }
+        if window.count >= self.rate_limit_per_minute {
+            return false;
+        }
+        window.count += 1;
+        true
+    }
+
+    /// The client IP from the `ConnectInfo` extension, when present.
+    pub fn client_ip(&self, req: &Request) -> Option<SocketAddr> {
+        req.extensions()
+            .get::<ConnectInfo<SocketAddr>>()
+            .map(|c| c.0)
     }
 }
 
@@ -49,6 +104,8 @@ pub struct AppError(ErrorKind);
 enum ErrorKind {
     BadRequest(String),
     Unauthorized,
+    RateLimited(String),
+    BodyTooLarge(u64),
     Internal(phrona::Error),
 }
 
@@ -60,6 +117,16 @@ impl AppError {
     fn unauthorized() -> Self {
         Self(ErrorKind::Unauthorized)
     }
+
+    fn rate_limited(limit: u32) -> Self {
+        Self(ErrorKind::RateLimited(format!(
+            "rate limit exceeded: at most {limit} requests per minute"
+        )))
+    }
+
+    fn body_too_large(max: u64) -> Self {
+        Self(ErrorKind::BodyTooLarge(max))
+    }
 }
 
 impl IntoResponse for AppError {
@@ -69,6 +136,11 @@ impl IntoResponse for AppError {
             ErrorKind::Unauthorized => (
                 StatusCode::UNAUTHORIZED,
                 json!({"error": "invalid api key"}),
+            ),
+            ErrorKind::RateLimited(msg) => (StatusCode::TOO_MANY_REQUESTS, json!({"error": msg})),
+            ErrorKind::BodyTooLarge(max) => (
+                StatusCode::PAYLOAD_TOO_LARGE,
+                json!({"error": format!("request body exceeds the {max}-byte limit")}),
             ),
             ErrorKind::Internal(e) => {
                 tracing::error!("search failed: {e}");
@@ -129,16 +201,24 @@ where
 }
 
 /// JSON body extractor whose rejection (missing body, malformed JSON,
-/// wrong content type) is a JSON 400 instead of axum's defaults.
+/// wrong content type) is a JSON 400 instead of axum's defaults. Bodies
+/// larger than the configured `server.max_body_bytes` are rejected with a
+/// 413 before deserialization.
 pub struct JsonBody<T>(pub T);
 
-impl<S, T: DeserializeOwned> FromRequest<S> for JsonBody<T>
-where
-    S: Send + Sync,
-{
+impl<T: DeserializeOwned> FromRequest<Arc<AppState>> for JsonBody<T> {
     type Rejection = AppError;
 
-    async fn from_request(req: Request, state: &S) -> AppResult<Self> {
+    async fn from_request(req: Request, state: &Arc<AppState>) -> AppResult<Self> {
+        if let Some(len) = req
+            .headers()
+            .get(axum::http::header::CONTENT_LENGTH)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.parse::<u64>().ok())
+            && len > state.max_body_bytes
+        {
+            return Err(AppError::body_too_large(state.max_body_bytes));
+        }
         let Json(v) = Json::<T>::from_request(req, state)
             .await
             .map_err(|e| AppError::bad_request(format!("invalid JSON body: {e}")))?;
@@ -192,7 +272,7 @@ fn build_options(p: &SearchParams, state: &AppState) -> AppResult<SearchOptions>
         opts.page = page.max(1);
     }
     if let Some(m) = p.max_results {
-        opts.max_results = m.clamp(1, 100);
+        opts.max_results = m.clamp(1, state.max_results_limit);
     }
     if let Some(s) = &p.safesearch {
         opts.safesearch = s.parse::<phrona::SafeSearch>().map_err(|_| {
@@ -227,77 +307,6 @@ fn header_key(headers: &HeaderMap) -> Option<String> {
 /// Bearer header. Used by every authenticated handler.
 pub(crate) fn api_key_from_headers(headers: &HeaderMap) -> Option<String> {
     header_key(headers)
-}
-
-fn split_results(resp: &SearchResponse) -> Vec<Value> {
-    let items: Vec<Value> = resp
-        .results
-        .iter()
-        .enumerate()
-        .map(|(i, r)| {
-            let pos = (i + 1) as f64;
-            let score = (1.0 - (pos - 1.0) * 0.05).max(0.05);
-            match r {
-                ResultItem::Web(w) => json!({
-                    "type": "web",
-                    "title": w.title,
-                    "url": w.url,
-                    "description": w.description,
-                    "score": score,
-                    "position": pos,
-                    "engines": w.engines,
-                }),
-                ResultItem::Image(i) => json!({
-                    "type": "image",
-                    "title": i.title,
-                    "url": i.url,
-                    "image_url": i.image_url,
-                    "thumbnail_url": i.thumbnail_url,
-                    "width": i.width,
-                    "height": i.height,
-                    "score": score,
-                    "position": pos,
-                    "engines": i.engines,
-                }),
-                ResultItem::News(n) => json!({
-                    "type": "news",
-                    "title": n.title,
-                    "url": n.url,
-                    "description": n.description,
-                    "published": n.published,
-                    "source": n.source,
-                    "score": score,
-                    "position": pos,
-                    "engines": n.engines,
-                }),
-                ResultItem::Video(v) => json!({
-                    "type": "video",
-                    "title": v.title,
-                    "url": v.url,
-                    "description": v.description,
-                    "thumbnail_url": v.thumbnail_url,
-                    "duration": v.duration,
-                    "views": v.views,
-                    "uploader": v.uploader,
-                    "score": score,
-                    "position": pos,
-                    "engines": v.engines,
-                }),
-                ResultItem::Book(b) => json!({
-                    "type": "book",
-                    "title": b.title,
-                    "url": b.url,
-                    "description": b.info,
-                    "author": b.author,
-                    "publisher": b.publisher,
-                    "score": score,
-                    "position": pos,
-                    "engines": b.engines,
-                }),
-            }
-        })
-        .collect();
-    items
 }
 
 async fn health(State(state): State<Arc<AppState>>) -> Json<Value> {
@@ -347,22 +356,14 @@ async fn engines(JsonQuery(p): JsonQuery<EnginesParams>) -> AppResult<Json<Value
 async fn search_route(
     State(state): State<Arc<AppState>>,
     JsonQuery(p): JsonQuery<SearchParams>,
-) -> AppResult<Json<Value>> {
+    req: Request,
+) -> AppResult<Json<SearchResponse>> {
+    if !state.check_rate(state.client_ip(&req)) {
+        return Err(AppError::rate_limited(state.rate_limit_per_minute));
+    }
     let opts = build_options(&p, &state)?;
     let resp = state.client.search(opts).await?;
-    let results = split_results(&resp);
-    let total = results.len();
-    Ok(Json(json!({
-        "query": resp.query,
-        "category": resp.category.as_str(),
-        "page": resp.page,
-        "total": total,
-        "results": results,
-        "suggestions": resp.suggestions,
-        "answer": resp.answer,
-        "engines": resp.engines,
-        "elapsed_ms": resp.elapsed_ms,
-    })))
+    Ok(Json(resp))
 }
 
 #[derive(Deserialize)]
@@ -376,7 +377,11 @@ struct SuggestParams {
 async fn suggest_route(
     State(state): State<Arc<AppState>>,
     JsonQuery(p): JsonQuery<SuggestParams>,
+    req: Request,
 ) -> AppResult<Json<Value>> {
+    if !state.check_rate(state.client_ip(&req)) {
+        return Err(AppError::rate_limited(state.rate_limit_per_minute));
+    }
     if !state.authorized(p.api_key.as_deref()) {
         return Err(AppError(ErrorKind::Unauthorized));
     }
@@ -414,11 +419,18 @@ async fn suggest_route(
     }
 }
 
-/// Build the axum router with the given optional API key.
-pub fn router(api_key: Option<String>) -> Router {
+/// Build the axum router from a [`PhronaConfig`]: the search client
+/// (profile / timeout / proxies / concurrency), the API key, the
+/// `max_results` clamp, the rate limit and the body-size cap all come from
+/// the config.
+pub fn router(cfg: PhronaConfig) -> Router {
+    let client = cfg.search_client().expect("build search client");
     let state = Arc::new(AppState::new(
-        SearchClient::new().expect("build search client"),
-        api_key,
+        client,
+        cfg.server.api_key.clone(),
+        cfg.max_results_limit(),
+        cfg.server.rate_limit_per_minute,
+        cfg.server.max_body_bytes,
     ));
 
     Router::new()
@@ -446,10 +458,11 @@ pub fn router(api_key: Option<String>) -> Router {
 }
 
 /// Serve the REST API on `addr`. Blocks until the server stops.
-pub async fn serve(addr: SocketAddr, api_key: Option<String>) -> anyhow::Result<()> {
+pub async fn serve(addr: SocketAddr, cfg: PhronaConfig) -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind(addr).await?;
     tracing::info!("phrona-api listening on http://{addr}");
-    axum::serve(listener, router(api_key)).await?;
+    let app = router(cfg).into_make_service_with_connect_info::<SocketAddr>();
+    axum::serve(listener, app).await?;
     Ok(())
 }
 
@@ -463,6 +476,11 @@ mod tests {
     use super::*;
     use axum::body::Body;
     use axum::http::Request;
+
+    fn router_with(mut cfg: PhronaConfig) -> Router {
+        cfg.server.api_key = Some("test-secret".into());
+        super::router(cfg)
+    }
 
     #[test]
     fn app_error_maps_to_status_codes() {
@@ -502,7 +520,7 @@ mod tests {
     #[tokio::test]
     async fn json_query_rejects_missing_fields_as_bad_request() {
         use tower::ServiceExt;
-        let router = super::router(None);
+        let router = router_with(PhronaConfig::defaults());
         let resp = router
             .oneshot(
                 Request::builder()
@@ -519,5 +537,65 @@ mod tests {
             v["error"].as_str().unwrap().to_lowercase(),
             "invalid query parameters: missing field `q`"
         );
+    }
+
+    #[tokio::test]
+    async fn rate_limit_returns_429_after_window_exhausted() {
+        use tower::ServiceExt;
+        let mut cfg = PhronaConfig::defaults();
+        cfg.server.rate_limit_per_minute = 2;
+        let router = router_with(cfg);
+        for _ in 0..2 {
+            let resp = router
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri("/v1/search?q=rust")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            // auth is checked before the search runs, so no network happens
+            assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+        }
+        let resp = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/v1/search?q=rust")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::TOO_MANY_REQUESTS);
+        let body = axum::body::to_bytes(resp.into_body(), 1024).await.unwrap();
+        let v: Value = serde_json::from_slice(&body).unwrap();
+        assert!(v["error"].as_str().unwrap().contains("rate limit"));
+    }
+
+    #[tokio::test]
+    async fn oversized_body_is_413_json() {
+        use tower::ServiceExt;
+        let mut cfg = PhronaConfig::defaults();
+        cfg.server.max_body_bytes = 8;
+        let router = super::router(cfg);
+        let resp = router
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/v1/extract")
+                    .header("content-type", "application/json")
+                    .header("content-length", "30")
+                    .body(Body::from(r#"{"url": "https://example.com"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::PAYLOAD_TOO_LARGE);
+        let body = axum::body::to_bytes(resp.into_body(), 1024).await.unwrap();
+        let v: Value = serde_json::from_slice(&body).unwrap();
+        assert!(v["error"].as_str().unwrap().contains("8-byte limit"));
     }
 }

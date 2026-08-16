@@ -18,17 +18,19 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub json: bool,
 
-    /// Browser impersonation profile
-    #[arg(long, global = true, value_parser = profile_parser, default_value = "chrome")]
-    pub profile: Profile,
+    /// Browser impersonation profile (default: engines.profile from
+    /// phonona.yaml / PHRONA_ENGINES_PROFILE, else chrome)
+    #[arg(long, global = true, value_parser = profile_parser)]
+    pub profile: Option<Profile>,
 
-    /// Proxy URL (e.g. socks5://127.0.0.1:9050), repeatable
+    /// Proxy URL (e.g. socks5://127.0.0.1:9050), repeatable; overrides the
+    /// configured proxy list
     #[arg(long, global = true)]
     pub proxy: Vec<String>,
 
-    /// Request timeout in seconds
-    #[arg(long, global = true, default_value_t = 20)]
-    pub timeout: u64,
+    /// Request timeout in seconds (default: search.timeout_secs, else 15)
+    #[arg(long, global = true)]
+    pub timeout: Option<u64>,
 
     #[command(subcommand)]
     pub command: Command,
@@ -193,15 +195,15 @@ pub struct TestArgs {
 
 #[derive(Args)]
 pub struct ServeArgs {
-    /// REST API bind address (default: $PHRONA_ADDR or 127.0.0.1:8080)
+    /// REST API bind address (default: server.bind_addr)
     #[arg(long)]
     pub addr: Option<String>,
 
-    /// MCP-over-TCP bind address (default: 127.0.0.1:8081)
-    #[arg(long, default_value = "127.0.0.1:8081")]
-    pub mcp_addr: String,
+    /// MCP-over-TCP bind address (default: server.mcp_addr)
+    #[arg(long)]
+    pub mcp_addr: Option<String>,
 
-    /// API key required by clients (default: $PHRONA_API_KEY)
+    /// API key required by clients (default: server.api_key)
     #[arg(long)]
     pub api_key: Option<String>,
 
@@ -238,30 +240,21 @@ fn time_range_parser(s: &str) -> Result<TimeRange, String> {
 }
 
 fn profile_parser(s: &str) -> Result<Profile, String> {
-    match s.to_ascii_lowercase().as_str() {
-        "chrome" | "chrome148" => Ok(Profile::Chrome),
-        "chrome149" => Ok(Profile::Chrome149),
-        "chrome140" => Ok(Profile::Chrome140),
-        "chrome131" => Ok(Profile::Chrome131),
-        "chrome120" => Ok(Profile::Chrome120),
-        "chrome100" => Ok(Profile::Chrome100),
-        "firefox" | "firefox148" => Ok(Profile::Firefox),
-        "firefox139" => Ok(Profile::Firefox139),
-        "safari" | "safari26" => Ok(Profile::Safari),
-        "edge" | "edge148" => Ok(Profile::Edge),
-        "opera" | "opera131" => Ok(Profile::Opera),
-        "okhttp" => Ok(Profile::OkHttp),
-        "random" => Ok(Profile::Random),
-        _ => Err(format!(
+    Profile::from_name(s).ok_or_else(|| {
+        format!(
             "unknown profile '{s}', expected chrome, firefox, safari, edge, opera, okhttp, random"
-        )),
-    }
+        )
+    })
 }
 
 impl Cli {
-    pub fn base_options(&self, query: impl Into<String>) -> SearchOptions {
+    pub fn base_options(
+        &self,
+        timeout: std::time::Duration,
+        query: impl Into<String>,
+    ) -> SearchOptions {
         let mut opts = SearchOptions::new(query);
-        opts.timeout = std::time::Duration::from_secs(self.timeout);
+        opts.timeout = timeout;
         opts
     }
 }
