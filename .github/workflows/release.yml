@@ -206,11 +206,15 @@ jobs:
       - name: Publish phrona, then its dependents
         if: ${{ env.CARGO_REGISTRY_TOKEN != '' }}
         run: |
-          cargo publish --allow-dirty --token "$CARGO_REGISTRY_TOKEN" -p phrona
-          cargo publish --allow-dirty --token "$CARGO_REGISTRY_TOKEN" -p phrona-api
-          cargo publish --allow-dirty --token "$CARGO_REGISTRY_TOKEN" -p phrona-mcp
-          cargo publish --allow-dirty --token "$CARGO_REGISTRY_TOKEN" -p phrona-cli
-          cargo publish --allow-dirty --token "$CARGO_REGISTRY_TOKEN" -p phrona-python
+          set -e
+          version="$(sed 's/^v//' <<< "${{ github.ref_name }}")"
+          for c in phrona phrona-api phrona-mcp phrona-cli phrona-python; do
+            if curl -fsS -H "User-Agent: phrona-publish" "https://crates.io/api/v1/crates/$c/$version" > /dev/null 2>&1; then
+              echo "$c $version already published, skipping"
+            else
+              cargo publish --allow-dirty --token "$CARGO_REGISTRY_TOKEN" -p "$c"
+            fi
+          done
 
   publish-pypi:
     name: publish PyPI
@@ -222,6 +226,7 @@ jobs:
       - uses: actions/download-artifact@v8
         with:
           path: dist
+          pattern: "wheels-*"
           merge-multiple: true
       - name: Publish wheels and sdist to PyPI
         if: ${{ env.PYPI_TOKEN != '' }}
