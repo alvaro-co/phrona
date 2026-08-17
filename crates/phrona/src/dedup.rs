@@ -1,3 +1,5 @@
+//! Cross-engine result deduplication and grouping.
+
 use std::collections::HashMap;
 
 use crate::models::RawResult;
@@ -48,10 +50,15 @@ pub fn dedup_key(url: &str) -> String {
     key
 }
 
+/// A set of raw results that deduplicate to the same URL.
 #[derive(Debug, Clone)]
 pub struct GroupedResult {
+    /// The first raw result that introduced this URL (kept as the display
+    /// result).
     pub result: RawResult,
+    /// Distinct engines that returned this URL, in first-seen order.
     pub engines: Vec<String>,
+    /// Number of engines that returned this URL.
     pub count: usize,
 }
 

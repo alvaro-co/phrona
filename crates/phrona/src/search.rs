@@ -1,3 +1,5 @@
+//! Orchestration: concurrent engines, merge, suggestions.
+
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -25,6 +27,9 @@ const MAX_CONCURRENT_ENGINES: usize = 8;
 /// `status` is one of `ok`, `empty` or `error`. `scope`/`kind` describe the
 /// failure reason and are `None` on success.
 pub trait EngineObserver: Send + Sync {
+    /// Called after an engine request completes, with the engine name, its
+    /// status (`ok` / `empty` / `error`), optional structured failure labels
+    /// and the elapsed time.
     fn on_engine_done(
         &self,
         engine: &str,
@@ -67,6 +72,10 @@ impl SearchClient {
         Self::with_options(Profile::Chrome, None, None, TargetPolicy::default())
     }
 
+    /// Build a client with explicit transport settings: impersonation
+    /// profile, per-request timeout, an optional list of proxy URLs (one
+    /// pooled client per proxy, used round-robin; empty = direct), and the
+    /// operator's domain allow/deny policy.
     pub fn with_options(
         profile: Profile,
         timeout: Option<std::time::Duration>,
@@ -118,7 +127,7 @@ impl SearchClient {
     ///
     /// Each engine task is assigned one sticky `HttpClient` from the proxy
     /// pool, and runs under a [`Semaphore`] limiting concurrency to the
-    /// client's concurrency cap (default [`MAX_CONCURRENT_ENGINES`]).
+    /// client's concurrency cap (default `MAX_CONCURRENT_ENGINES`).
     /// Engines run concurrently (`FuturesUnordered`) under a single adaptive
     /// deadline (`opts.timeout`). As soon as the merged result set reaches
     /// `opts.max_results` the remaining in-flight engine futures are dropped
@@ -306,6 +315,11 @@ impl SearchClient {
     }
 }
 
+/// Convert a merged, ranked group into a typed [`ResultItem`] for the
+/// response. The category is inferred from the engine that introduced the
+/// result; unknown engines map to `Web`. `idx` is the zero-based result
+/// index (position becomes `idx + 1`). Returns `None` only when a result
+/// carries no URL and cannot be placed.
 pub fn to_result_item(g: GroupedResult, score: f64, idx: usize) -> Option<ResultItem> {
     let raw = g.result;
     let category = crate::engine::category_of_engine(&raw.engine);

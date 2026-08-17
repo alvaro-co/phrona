@@ -1,3 +1,5 @@
+//! Google web search engine.
+
 use async_trait::async_trait;
 
 use crate::engine::{Engine, EngineContext};
@@ -41,6 +43,7 @@ impl Google {
         p
     }
 
+    /// Build the Google search URL for the given options.
     pub fn search_url(opts: &crate::options::SearchOptions) -> String {
         parse::with_query("https://www.google.com/search", Self::base_params(opts))
     }

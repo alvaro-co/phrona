@@ -1,3 +1,5 @@
+//! HTTP client with browser impersonation, proxy pool and SSRF guards.
+
 use std::net::IpAddr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
@@ -17,7 +19,9 @@ use crate::extract::is_safe_ip;
 /// covers subdomains (e.g. `example.com` matches `www.example.com`).
 #[derive(Clone, Debug, Default)]
 pub struct TargetPolicy {
+    /// Domains always allowed; empty permits any host.
     pub allowed: Vec<String>,
+    /// Domains always denied; denied wins over allowed.
     pub denied: Vec<String>,
 }
 
@@ -122,22 +126,39 @@ fn ssrf_redirect_policy(max_redirects: usize, policy: TargetPolicy) -> redirect:
 /// Browser profile used to impersonate a real browser over TLS/HTTP2.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Profile {
+    /// Chrome 148 impersonation (default).
     Chrome,
+    /// Chrome 100 impersonation.
     Chrome100,
+    /// Chrome 120 impersonation.
     Chrome120,
+    /// Chrome 131 impersonation.
     Chrome131,
+    /// Chrome 140 impersonation.
     Chrome140,
+    /// Chrome 149 impersonation.
     Chrome149,
+    /// Firefox 148 impersonation (default).
     Firefox,
+    /// Firefox 139 impersonation.
     Firefox139,
+    /// Firefox 148 impersonation.
     Firefox148,
+    /// Edge 148 impersonation (default).
     Edge,
+    /// Edge 148 impersonation.
     Edge148,
+    /// Safari 26 impersonation (default).
     Safari,
+    /// Safari 26 impersonation.
     Safari26,
+    /// Opera 131 impersonation (default).
     Opera,
+    /// Opera 131 impersonation.
     Opera131,
+    /// Android OkHttp impersonation.
     OkHttp,
+    /// Rotate to a random profile per request.
     Random,
 }
 
@@ -272,10 +293,15 @@ impl ProxyPool {
         })
     }
 
+    /// Number of pooled clients (one per proxy URL, or 1 for direct
+    /// connections).
     pub fn len(&self) -> usize {
         self.clients.len()
     }
 
+    /// Whether the pool holds no clients. A pool built from an empty proxy
+    /// list always contains a single direct client, so this is only `true`
+    /// for a manually constructed empty pool.
     pub fn is_empty(&self) -> bool {
         self.clients.is_empty()
     }
@@ -292,12 +318,20 @@ impl ProxyPool {
     }
 }
 
+/// A persistent HTTP client with browser impersonation, a cookie jar,
+/// per-request timeout, and SSRF-guarded redirects.
+///
+/// Build one with [`HttpClient::builder`], or skip the details and use
+/// [`crate::SearchClient`] (which owns a pool of these) or the convenience
+/// [`crate::search()`] / [`crate::search_sync()`] helpers.
 pub struct HttpClient {
     client: wreq::Client,
     target_policy: TargetPolicy,
 }
 
 impl HttpClient {
+    /// Start building a client; defaults are Chrome impersonation, 10s
+    /// timeout, cookies enabled, 10 redirect hops and an open domain policy.
     pub fn builder() -> HttpClientBuilder {
         HttpClientBuilder::default()
     }
@@ -307,6 +341,9 @@ impl HttpClient {
         &self.target_policy
     }
 
+    /// Perform a GET request. Redirects are followed up to the configured
+    /// limit, validating each hop's scheme and destination against the
+    /// domain/IP policy.
     pub async fn get(&self, url: &str) -> Result<wreq::Response> {
         Ok(self.client.get(url).send().await?)
     }
@@ -323,6 +360,7 @@ impl HttpClient {
             .await?)
     }
 
+    /// Perform a GET with extra request headers merged over the defaults.
     pub async fn get_with_headers(&self, url: &str, headers: &HeaderMap) -> Result<wreq::Response> {
         let mut rb = self.client.get(url);
         for (k, v) in headers {
@@ -331,6 +369,8 @@ impl HttpClient {
         Ok(rb.send().await?)
     }
 
+    /// Perform a POST with an `application/x-www-form-urlencoded` body
+    /// (e.g. as returned by [`crate::parse::form_encode`]).
     pub async fn post_form(&self, url: &str, form: &str) -> Result<wreq::Response> {
         Ok(self
             .client
@@ -344,6 +384,8 @@ impl HttpClient {
             .await?)
     }
 
+    /// Perform a form POST with extra request headers merged over the
+    /// defaults.
     pub async fn post_form_with_headers(
         &self,
         url: &str,
@@ -365,6 +407,8 @@ impl HttpClient {
     }
 }
 
+/// Builder for [`HttpClient`]. All methods are chainable and consume `self`;
+/// finalize with [`HttpClientBuilder::build`].
 pub struct HttpClientBuilder {
     profile: Profile,
     timeout: Duration,
@@ -396,6 +440,8 @@ impl Default for HttpClientBuilder {
 }
 
 impl HttpClientBuilder {
+    /// Set the browser impersonation profile; the User-Agent header is kept
+    /// in lockstep with the TLS/HTTP2 fingerprint.
     pub fn profile(mut self, profile: Profile) -> Self {
         self.profile = profile;
         // keep the UA in lockstep with the TLS/HTTP2 impersonation profile
@@ -406,21 +452,29 @@ impl HttpClientBuilder {
         self
     }
 
+    /// Set the per-request timeout (default 10s).
     pub fn timeout(mut self, timeout: Duration) -> Self {
         self.timeout = timeout;
         self
     }
 
+    /// Route traffic through a proxy (e.g. `socks5://127.0.0.1:9050`).
+    /// `None` (the default) connects directly.
     pub fn proxy(mut self, proxy: Option<String>) -> Self {
         self.proxy = proxy;
         self
     }
 
+    /// Apply the operator domain allow/deny policy to every outbound target
+    /// (initial URL and each redirect hop).
     pub fn target_policy(mut self, policy: TargetPolicy) -> Self {
         self.target_policy = policy;
         self
     }
 
+    /// Build the client. Returns an [`Error::invalid_query`] for an invalid
+    /// proxy URL and an internal error if the underlying client cannot be
+    /// constructed.
     pub fn build(self) -> Result<HttpClient> {
         let mut builder = wreq::Client::builder()
             .emulation(self.profile.to_emulation())

@@ -1,3 +1,5 @@
+//! Concrete search engines and their parsers.
+
 pub mod annas_archive;
 pub mod bing;
 pub mod bing_images;

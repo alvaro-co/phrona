@@ -1,3 +1,5 @@
+//! Brave image search engine.
+
 use async_trait::async_trait;
 
 use crate::engine::{Engine, EngineContext};
@@ -49,6 +51,8 @@ impl Engine for BraveImages {
     }
 }
 
+/// Parse a Brave images HTML SERP into [`RawResult`] items, decoding the
+/// base64-proxied image URLs.
 pub fn parse_brave_images(html: &str, engine: &str) -> Vec<RawResult> {
     let mut out = Vec::new();
     let doc = parse::parse_html(html);

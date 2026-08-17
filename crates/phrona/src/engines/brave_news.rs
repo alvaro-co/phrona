@@ -1,3 +1,5 @@
+//! Brave news search engine.
+
 use async_trait::async_trait;
 
 use crate::engine::{Engine, EngineContext};
@@ -44,6 +46,8 @@ impl Engine for BraveNews {
     }
 }
 
+/// Parse a Brave news HTML SERP into [`RawResult`] items using the shared
+/// result-wrapper layout.
 pub fn parse_brave_news(html: &str, engine: &str) -> Vec<RawResult> {
     let doc = parse::parse_html(html);
     let mut out = Vec::new();

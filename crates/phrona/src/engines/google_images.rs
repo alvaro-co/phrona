@@ -1,3 +1,5 @@
+//! Google image search engine.
+
 use async_trait::async_trait;
 
 use crate::engine::{Engine, EngineContext};
@@ -67,6 +69,8 @@ impl Engine for GoogleImages {
     }
 }
 
+/// Parse a Google images `ischj` JSON payload (embedded in the search page
+/// text) into [`RawResult`] items.
 pub fn parse_google_images(text: &str, engine: &str) -> Vec<RawResult> {
     let Some(start) = text.find("{\"ischj\":") else {
         return Vec::new();

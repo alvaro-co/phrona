@@ -1,3 +1,5 @@
+//! Bing image search engine.
+
 use async_trait::async_trait;
 
 use crate::engine::{Engine, EngineContext};
@@ -44,6 +46,8 @@ impl Engine for BingImages {
     }
 }
 
+/// Parse a Bing images async HTML response into [`RawResult`] items, reading
+/// the JSON payload embedded in each result's `m` attribute.
 pub fn parse_bing_images(html: &str, engine: &str) -> Vec<RawResult> {
     let doc = parse::parse_html(html);
     let mut out = Vec::new();

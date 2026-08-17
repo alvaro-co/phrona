@@ -1,6 +1,6 @@
 //! Internal dev tool: capture live engine responses into tests/fixtures.
 //!
-//! Usage: cargo run -p phrona --bin fetch_fixtures [query]
+//! Usage: `cargo run -p phrona --bin fetch_fixtures [query]`
 //!
 //! Every request mirrors the corresponding engine implementation so the
 //! saved fixtures exercise exactly the code paths the parsers consume.

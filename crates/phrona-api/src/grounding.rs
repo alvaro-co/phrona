@@ -1,3 +1,5 @@
+//! AI grounding endpoint: extractive answers over ranked search results.
+
 use std::sync::Arc;
 
 use axum::Json;
@@ -14,42 +16,62 @@ use crate::{AppError, AppResult, AppState, HeaderAuth, JsonBody, JsonQuery};
 /// the JSON body.
 #[derive(Deserialize)]
 pub struct GroundingRequest {
+    /// The search query to ground an answer on.
     pub query: String,
     #[serde(default)]
+    /// Optional API key; the `Authorization` header is the preferred fallback.
     pub api_key: Option<String>,
     #[serde(default)]
+    /// Maximum number of sources to return (clamped to 1..=50).
     pub max_results: Option<usize>,
     #[serde(default)]
+    /// Optional search category (`web`, `images`, `news`, `videos`, `books`).
     pub category: Option<String>,
     #[serde(default)]
+    /// Optional time range filter (`day`, `week`, `month`, `year`).
     pub time_range: Option<String>,
 }
 
 /// GET /v1/grounding?query=... - same feature; auth is header-only.
 #[derive(Deserialize)]
 pub struct GroundingGetParams {
+    /// The search query to ground an answer on.
     pub query: String,
     #[serde(default)]
+    /// Maximum number of sources to return (clamped to 1..=50).
     pub max_results: Option<usize>,
     #[serde(default)]
+    /// Optional search category (`web`, `images`, `news`, `videos`, `books`).
     pub category: Option<String>,
     #[serde(default)]
+    /// Optional time range filter (`day`, `week`, `month`, `year`).
     pub time_range: Option<String>,
 }
 
+/// The response to a grounding request: an extractive answer plus the
+/// ranked sources it was built from.
 #[derive(Serialize)]
 pub struct GroundingResponse {
+    /// The query the answer was built for.
     pub query: String,
+    /// Extractive answer synthesized from the sources.
     pub answer: String,
+    /// Ranked sources supporting the answer.
     pub sources: Vec<GroundingSource>,
+    /// Wall-clock time spent searching, in seconds.
     pub response_time: f64,
 }
 
+/// One ranked source for a grounding answer.
 #[derive(Serialize)]
 pub struct GroundingSource {
+    /// Page title of the source.
     pub title: String,
+    /// URL of the source.
     pub url: String,
+    /// Readable text content used for grounding.
     pub content: String,
+    /// Positional relevance score (1.0 down to 0.05).
     pub score: f64,
 }
 
@@ -84,6 +106,8 @@ fn synthesize_answer(resp: &phrona::SearchResponse, sources: &[GroundingSource])
     )
 }
 
+/// `GET /v1/grounding?query=...`: header-auth variant of the grounding
+/// endpoint.
 pub async fn get(
     State(state): State<Arc<AppState>>,
     auth: HeaderAuth,
@@ -102,6 +126,8 @@ pub async fn get(
     .await
 }
 
+/// `POST /v1/grounding`: body variant of the grounding endpoint; the API key
+/// may come from the `Authorization` header or the JSON body.
 pub async fn post(
     State(state): State<Arc<AppState>>,
     headers: axum::http::HeaderMap,

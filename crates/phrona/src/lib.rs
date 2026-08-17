@@ -1,4 +1,46 @@
-//! Phrona - a high-performance metasearch engine library.
+//! # Phrona
+//!
+//! A high-performance metasearch engine library: it runs many search
+//! providers concurrently with per-provider browser impersonation, then
+//! merges, deduplicates and ranks the results by cross-engine agreement.
+//!
+//! ## Quick start
+//!
+//! ```no_run
+//! use phrona::{SearchOptions, search};
+//!
+//! # async fn demo() -> Result<(), phrona::Error> {
+//! let opts = SearchOptions::new("rust async runtime");
+//! let resp = search(opts).await?;
+//! for r in resp.web() {
+//!     println!("{:>3}. {} - {}", r.position, r.title, r.url);
+//! }
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! ## What it offers
+//!
+//! - **Multi-engine search** over 26 providers across 5 categories (web,
+//!   images, news, videos, books): [`search()`], [`SearchClient`].
+//! - **Browser impersonation** (TLS + HTTP/2 fingerprints and matching
+//!   User-Agents), per profile and proxy: [`Profile`], [`HttpClient`].
+//! - **Merging, deduplication and ranking**: [`dedup`], [`rank`].
+//! - **Structured errors** you can branch on: [`Error`], [`error`].
+//! - **Page extraction for AI grounding** with SSRF guards: [`extract()`].
+//! - **Autocomplete suggestions**: [`suggest`], [`suggest_all`].
+//! - **Typed configuration** from YAML + environment: [`PhronaConfig`],
+//!   [`config`].
+//!
+//! ## Resources
+//!
+//! - [Repository](https://github.com/alvaro-co/phrona) — the crate README is
+//!   the full user guide.
+//! - `docs/` — architecture, engines, CLI, REST API and library references.
+//! - The `phrona-cli` crate ships a full command line, `phrona-api` the REST
+//!   + MCP server, and `phrona-python` the Python bindings.
+
+#![warn(missing_docs)]
 
 pub mod client;
 pub mod config;
@@ -23,8 +65,10 @@ pub use search::{
     EngineObserver, NoopEngineObserver, SearchClient, available_engines, search, search_sync,
 };
 
+/// The crate version, read from `CARGO_PKG_VERSION`.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// The crate version as a string.
 pub fn version() -> &'static str {
     VERSION
 }

@@ -1,3 +1,5 @@
+//! Search parameters shared by every engine.
+
 use std::time::Duration;
 
 use crate::models::{Category, SafeSearch, TimeRange};
@@ -5,15 +7,23 @@ use crate::models::{Category, SafeSearch, TimeRange};
 /// Search parameters shared by every engine.
 #[derive(Debug, Clone)]
 pub struct SearchOptions {
+    /// The search query text.
     pub query: String,
+    /// Search category; selects which engines run.
     pub category: Category,
     /// Restrict to these engines. Empty means "all enabled engines for the category".
     pub engines: Vec<String>,
+    /// 1-based result page to fetch.
     pub page: u32,
+    /// Maximum number of results to return.
     pub max_results: usize,
+    /// Safe-search strictness level.
     pub safesearch: SafeSearch,
+    /// Region hint (e.g. `"us-en"`), passed to engines.
     pub region: Option<String>,
+    /// Language hint (e.g. `"en"`), passed to engines.
     pub language: Option<String>,
+    /// Restrict results to a time window (engines that support it).
     pub time_range: Option<TimeRange>,
     /// Engine-specific free-form filter string (e.g. DDG image filters
     /// "size:Large,color:red"). Passed through to engines that support it.
@@ -42,6 +52,9 @@ impl Default for SearchOptions {
 }
 
 impl SearchOptions {
+    /// Create options with only a query set; everything else takes its
+    /// default (web category, page 1, `max_results` 20, moderate safe
+    /// search, 10s timeout). Mutate the public fields to customize.
     pub fn new(query: impl Into<String>) -> Self {
         Self {
             query: query.into(),
@@ -72,6 +85,8 @@ impl SearchOptions {
         (lang.to_string(), country.to_string())
     }
 
+    /// The region to send to engines as a `lang-country` parameter,
+    /// defaulting to `en-us`.
     pub fn region_param(&self) -> String {
         self.region.clone().unwrap_or_else(|| {
             let (lang, country) = self.lang_country();

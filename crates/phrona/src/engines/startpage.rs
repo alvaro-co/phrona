@@ -1,3 +1,5 @@
+//! Startpage web search engine.
+
 use async_trait::async_trait;
 
 use crate::engine::{Engine, EngineContext};
@@ -72,6 +74,8 @@ impl Engine for Startpage {
     }
 }
 
+/// Fetch the Startpage anti-bot `sc` token from the homepage, caching it in
+/// the shared context (used by the multi-step `sc -> search` flow).
 pub async fn fetch_sc(ctx: &EngineContext<'_>) -> Result<String> {
     if let Some(sc) = ctx.shared.sc_get() {
         return Ok(sc);

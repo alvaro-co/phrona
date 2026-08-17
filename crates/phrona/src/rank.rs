@@ -1,3 +1,5 @@
+//! Cross-engine ranking and scoring.
+
 use crate::dedup::GroupedResult;
 
 /// Split a query into the alphanumeric terms used for matching, using the
@@ -48,7 +50,7 @@ pub fn rank(groups: Vec<GroupedResult>, query: &str) -> Vec<(f64, GroupedResult)
 
 /// Unified cross-category score for a grouped result, normalized to a float
 /// bounded strictly between 0.001 and 1.000 (rounded to 3 decimal places).
-/// Higher is better; the value is monotonic in [`raw_score`].
+/// Higher is better; the value is monotonic in the raw score.
 pub fn calculate_score(grouped: &GroupedResult, query_terms: &[String]) -> f64 {
     let raw = raw_score(grouped, query_terms);
     let norm = raw / (1.0 + raw);

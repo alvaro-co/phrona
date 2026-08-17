@@ -1,3 +1,5 @@
+//! HTML/URL/text parsing helpers for engine responses.
+
 use scraper::{ElementRef, Html, Selector};
 
 /// Collapse all whitespace runs into single spaces and trim.
@@ -18,10 +20,13 @@ pub fn collapse(s: &str) -> String {
     out.trim().to_string()
 }
 
+/// Collapsed text content of an element (whitespace runs → single spaces).
 pub fn text_of(el: &ElementRef) -> String {
     collapse(&el.text().collect::<String>())
 }
 
+/// The value of the first attribute `name` on the first match of
+/// `selector` within `el`.
 pub fn attr(el: &ElementRef, selector: &str, name: &str) -> Option<String> {
     let sel = Selector::parse(selector).ok()?;
     el.select(&sel)
@@ -31,6 +36,7 @@ pub fn attr(el: &ElementRef, selector: &str, name: &str) -> Option<String> {
         .map(|s| s.to_string())
 }
 
+/// Collapsed text of the first match of `selector`, if non-empty.
 pub fn select_text(el: &ElementRef, selector: &str) -> Option<String> {
     let sel = Selector::parse(selector).ok()?;
     el.select(&sel)
@@ -39,6 +45,7 @@ pub fn select_text(el: &ElementRef, selector: &str) -> Option<String> {
         .filter(|t| !t.is_empty())
 }
 
+/// Collapsed text of every match of `selector`, in document order.
 pub fn select_texts(el: &ElementRef, selector: &str) -> Vec<String> {
     let Ok(sel) = Selector::parse(selector) else {
         return Vec::new();
@@ -67,10 +74,13 @@ pub fn select_first_nonempty(el: &ElementRef, selector: &str) -> Option<String> 
     None
 }
 
+/// Parse an HTML string into a queryable document.
 pub fn parse_html(html: &str) -> Html {
     Html::parse_document(html)
 }
 
+/// Collapsed text of the first match of `selector` in a document, if
+/// non-empty.
 pub fn doc_text(doc: &Html, selector: &str) -> Option<String> {
     let sel = Selector::parse(selector).ok()?;
     doc.select(&sel)
@@ -79,6 +89,8 @@ pub fn doc_text(doc: &Html, selector: &str) -> Option<String> {
         .filter(|t| !t.is_empty())
 }
 
+/// Value of the first attribute `name` on the first match of `selector` in
+/// a document.
 pub fn doc_attr(doc: &Html, selector: &str, name: &str) -> Option<String> {
     let sel = Selector::parse(selector).ok()?;
     doc.select(&sel)
@@ -153,6 +165,7 @@ pub fn unwrap_wrapper_url(href: &str) -> String {
     href.to_string()
 }
 
+/// Percent-decode a string (`%20` → space), lossy for invalid UTF-8.
 pub fn percent_decode(s: &str) -> String {
     percent_encoding::percent_decode_str(s)
         .decode_utf8_lossy()
@@ -168,6 +181,7 @@ fn decode_b64url(s: &str) -> Result<Vec<u8>, base64::DecodeError> {
 // URL helpers
 // ---------------------------------------------------------------------------
 
+/// Extract the host part of a URL, if parseable.
 pub fn host_of(url: &str) -> Option<String> {
     url::Url::parse(url)
         .ok()
@@ -200,6 +214,7 @@ where
     u.to_string()
 }
 
+/// Percent-encode a string for use in a URL query (`a b&c` → `a%20b%26c`).
 pub fn encode_query(s: &str) -> String {
     use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
     utf8_percent_encode(s, NON_ALPHANUMERIC).to_string()
@@ -288,6 +303,8 @@ pub fn excerpt(text: &str, needle: &str, radius: usize) -> String {
     out
 }
 
+/// Truncate `text` to at most `max` characters, appending `...` when cut.
+/// Always respects character boundaries (safe on multi-byte input).
 pub fn truncate(text: &str, max: usize) -> String {
     if text.chars().count() <= max {
         return text.to_string();

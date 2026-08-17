@@ -1,3 +1,5 @@
+//! Bing web search engine.
+
 use async_trait::async_trait;
 
 use crate::engine::{Engine, EngineContext};
@@ -80,6 +82,8 @@ impl Engine for Bing {
     }
 }
 
+/// Parse a Bing web-search HTML SERP into [`RawResult`] items, unwrapping
+/// redirect and tracking URLs.
 pub fn parse_bing(html: &str, engine: &str) -> Vec<RawResult> {
     let doc = parse::parse_html(html);
     let mut out = Vec::new();

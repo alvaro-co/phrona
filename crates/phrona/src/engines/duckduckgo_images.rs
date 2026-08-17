@@ -1,3 +1,5 @@
+//! DuckDuckGo image search engine.
+
 use async_trait::async_trait;
 
 use crate::engine::{Engine, EngineContext};
@@ -64,6 +66,7 @@ impl Engine for DuckDuckGoImages {
     }
 }
 
+/// Parse a DuckDuckGo images JSON response into [`RawResult`] items.
 pub fn parse_ddg_images(json: &serde_json::Value, engine: &str) -> Vec<RawResult> {
     let mut out = Vec::new();
     let Some(results) = json.get("results").and_then(|r| r.as_array()) else {

@@ -1,3 +1,5 @@
+//! Bing news search engine.
+
 use async_trait::async_trait;
 
 use crate::engine::{Engine, EngineContext};
@@ -43,6 +45,7 @@ impl Engine for BingNews {
     }
 }
 
+/// Parse a Bing news infinite-scroll HTML response into [`RawResult`] items.
 pub fn parse_bing_news(html: &str, engine: &str) -> Vec<RawResult> {
     let doc = parse::parse_html(html);
     let mut out = Vec::new();

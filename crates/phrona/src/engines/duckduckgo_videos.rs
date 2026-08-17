@@ -1,3 +1,5 @@
+//! DuckDuckGo video search engine.
+
 use async_trait::async_trait;
 
 use crate::engine::{Engine, EngineContext};
@@ -63,6 +65,7 @@ impl Engine for DuckDuckGoVideos {
     }
 }
 
+/// Parse a DuckDuckGo videos JSON response into [`RawResult`] items.
 pub fn parse_ddg_videos(json: &serde_json::Value, engine: &str) -> Vec<RawResult> {
     let mut out = Vec::new();
     let Some(results) = json.get("results").and_then(|r| r.as_array()) else {

@@ -1,5 +1,7 @@
 use phrona::{Category, EngineReport, ResultItem, SearchResponse};
 
+/// Print one result line: ` 3. [web   ] Title` plus the URL and optional
+/// metadata indented below.
 pub fn result_line(kind: &str, position: usize, title: &str, url: &str, meta: &str) {
     println!(
         "{position:>3}. [{kind:6}] {title}\n     {url}{}",
@@ -11,6 +13,8 @@ pub fn result_line(kind: &str, position: usize, title: &str, url: &str, meta: &s
     );
 }
 
+/// Print a full [`SearchResponse`] in human-readable form: summary line,
+/// answer, suggestions, per-engine report, then each result.
 pub fn print_response(r: &SearchResponse) {
     println!(
         "query: {}\ncategory: {} | page: {} | results: {} | elapsed: {} ms",
@@ -46,6 +50,8 @@ pub fn print_response(r: &SearchResponse) {
     }
 }
 
+/// Print one typed result item at `position`, formatting category-specific
+/// metadata.
 pub fn print_item(position: usize, item: &ResultItem) {
     match item {
         ResultItem::Web(w) => result_line("web", position, &w.title, &w.url, &w.description),
@@ -96,6 +102,7 @@ pub fn print_item(position: usize, item: &ResultItem) {
     }
 }
 
+/// Print the list of registered engines for a category (`phrona engines`).
 pub fn print_engines_table(category: Category) {
     let names: Vec<String> = phrona::available_engines(category)
         .iter()
@@ -109,6 +116,8 @@ pub fn print_engines_table(category: Category) {
     );
 }
 
+/// Print the availability matrix from a `phrona test` run: one line per
+/// category plus a deduplicated per-engine OK/error table.
 pub fn print_test_report(reports: Vec<(Category, SearchResponse)>) {
     let mut matrix: Vec<EngineReport> = Vec::new();
     let mut printed = std::collections::BTreeSet::new();
@@ -140,6 +149,8 @@ pub fn print_test_report(reports: Vec<(Category, SearchResponse)>) {
     }
 }
 
+/// Print a grounded search result: the answer plus up to `max_results`
+/// sources with their content.
 pub fn print_grounded(query: &str, resp: &SearchResponse, max_results: usize) {
     let answer = resp
         .answer

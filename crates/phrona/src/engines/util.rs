@@ -1,3 +1,5 @@
+//! Shared engine helpers (HTTP checks, token parsing, decoding).
+
 use std::time::Duration;
 
 use crate::engine::EngineContext;
@@ -10,7 +12,9 @@ use crate::parse;
 /// from HTTP metadata alone.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum MediaType {
+    /// Expects an HTML response.
     Html,
+    /// Expects a JSON response.
     Json,
     /// No content-type expectation (endpoints with heterogeneous types).
     Any,
@@ -21,14 +25,15 @@ pub enum MediaType {
 /// Classification uses only HTTP metadata — status code, anti-bot response
 /// headers and `Content-Type` — never body phrasing:
 ///
-/// * `cf-mitigated` / `cf-challenge` / `cf-ray`+403 → [`ErrorKind::Blocked`]
-///   (Cloudflare); `x-datadome` → captcha
-/// * `429` → [`ErrorKind::RateLimited`] (honoring `Retry-After`)
-/// * `403` → [`ErrorKind::Blocked`]
-/// * other non-2xx → [`ErrorKind::UpstreamUnavailable`]
+/// * `cf-mitigated` / `cf-challenge` / `cf-ray`+403 →
+///   [`crate::error::ErrorKind::Blocked`] (Cloudflare); `x-datadome` →
+///   captcha
+/// * `429` → [`crate::error::ErrorKind::RateLimited`] (honoring `Retry-After`)
+/// * `403` → [`crate::error::ErrorKind::Blocked`]
+/// * other non-2xx → [`crate::error::ErrorKind::UpstreamUnavailable`]
 /// * a 2xx response whose `Content-Type` contradicts the expected
-///   [`MediaType`] → [`ErrorKind::MalformedPayload`] (a structural
-///   deviation, not a rate limit)
+///   [`MediaType`] → [`crate::error::ErrorKind::MalformedPayload`] (a
+///   structural deviation, not a rate limit)
 ///
 /// A 2xx response of the expected type is trusted as-is; whether it actually
 /// contains results is the parser's job (an empty parse is an honest "no
@@ -166,13 +171,14 @@ pub fn fixture_parses(name: &str) -> bool {
 
 /// Parse a response body that must be JSON. A body that is not valid JSON is
 /// a schema deviation (the endpoint returned something other than its
-/// contract), reported as [`ErrorScope::Schema`].
+/// contract), reported as [`crate::error::ErrorScope::Schema`].
 pub fn parse_json_body(engine: &'static str, body: &[u8]) -> Result<serde_json::Value> {
     serde_json::from_slice(body).map_err(|_| Error::schema(engine, "invalid JSON response"))
 }
 
 /// Decode the original URL from a Brave proxied image URL
-/// (https://imgs.search.brave.com/.../g:ce/<base64>).
+/// (`https://imgs.search.brave.com/...`): the path ends with
+/// `g:ce/<base64>` and the remainder is a standard-base64 payload.
 pub fn brave_b64_decode(src: &str) -> String {
     let Some(idx) = src.rfind("/g:ce/") else {
         return String::new();
@@ -226,6 +232,8 @@ pub fn parse_brave_wrapper(node: &scraper::ElementRef) -> Option<RawResult> {
     })
 }
 
+/// Map a [`TimeRange`] to the one-letter time filter used by most engines'
+/// URL parameters.
 pub fn time_param(t: &TimeRange) -> &'static str {
     match t {
         TimeRange::Day => "d",
@@ -235,6 +243,8 @@ pub fn time_param(t: &TimeRange) -> &'static str {
     }
 }
 
+/// Map a [`TimeRange`] to its equivalent age in minutes, as used by Bing's
+/// `qft` filter (`filterui:age-lt<N>`).
 pub fn bing_time_minutes(t: &TimeRange) -> &'static str {
     match t {
         TimeRange::Day => "1440",
@@ -260,6 +270,7 @@ pub async fn ddg_vqd(ctx: &EngineContext<'_>, query: &str) -> Result<String> {
     Ok(vqd)
 }
 
+/// Extract the DuckDuckGo `vqd` token from the HTML of a search page.
 pub fn extract_vqd(text: &str) -> Option<String> {
     for needle in ["vqd=\"", "vqd=", "vqd='"] {
         if let Some(idx) = text.find(needle) {

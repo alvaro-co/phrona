@@ -1,3 +1,5 @@
+//! Ann's Archive search engine.
+
 use async_trait::async_trait;
 
 use crate::engine::{Engine, EngineContext};
@@ -55,6 +57,8 @@ impl Engine for AnnasArchive {
     }
 }
 
+/// Parse an Anna's Archive book-search HTML SERP into [`RawResult`] items.
+/// Relative links are made absolute using the given `domain`.
 pub fn parse_annas(html: &str, engine: &str, domain: &str) -> Vec<RawResult> {
     let cleaned = html.replace("<!--", "").replace("-->", "");
     let doc = parse::parse_html(&cleaned);

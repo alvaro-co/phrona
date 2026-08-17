@@ -1,3 +1,5 @@
+//! Marginalia search engine.
+
 use async_trait::async_trait;
 
 use crate::engine::{Engine, EngineContext};
@@ -44,6 +46,7 @@ impl Engine for Marginalia {
     }
 }
 
+/// Parse a Marginalia search HTML SERP into [`RawResult`] items.
 pub fn parse_marginalia(html: &str, engine: &str) -> Vec<RawResult> {
     let doc = parse::parse_html(html);
     let mut out = Vec::new();

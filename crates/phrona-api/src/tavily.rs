@@ -1,3 +1,5 @@
+//! Tavily-compatible `/search` endpoint.
+
 use std::sync::Arc;
 
 use axum::extract::State;
@@ -12,54 +14,78 @@ use crate::{AppError, AppResult, AppState, JsonBody};
 
 /// Tavily-compatible request body.
 ///
-/// The Tavily API (https://docs.tavily.com) is the de-facto standard for
+/// The Tavily API (<https://docs.tavily.com>) is the de-facto standard for
 /// AI search. Clients such as `tavily-python` can target this server by
 /// setting `base_url` to it and calling `/search`.
 #[derive(Deserialize)]
 pub struct TavilyRequest {
+    /// The search query.
     pub query: String,
     #[serde(default)]
+    /// Optional API key accepted in the body for Tavily SDK compatibility.
     pub api_key: Option<String>,
     #[serde(default)]
+    /// `basic` (two engines) or `advanced` (all engines).
     pub search_depth: Option<String>,
     #[serde(default)]
+    /// Optional `news` topic; anything else searches the web.
     pub topic: Option<String>,
     #[serde(default)]
+    /// Recent-window in days, mapped to a `TimeRange`.
     pub days: Option<u32>,
     #[serde(default)]
+    /// Maximum number of results to return (clamped to 1..=20).
     pub max_results: Option<usize>,
     #[serde(default)]
+    /// Whether to populate the `images` field via a dedicated image search.
     pub include_images: bool,
     #[serde(default)]
+    /// Whether to return an answer (library answer, e.g. grokipedia).
     pub include_answer: bool,
     #[serde(default)]
+    /// Whether to fetch and attach raw page text for each result.
     pub include_raw_content: bool,
     /// Accepted for compatibility with Tavily clients; only meaningful for
     /// Tavily's image-search endpoint, which this server does not expose.
     #[serde(default)]
     pub include_image_descriptions: bool,
     #[serde(default)]
+    /// Domains to restrict results to (as `site:` filters).
     pub include_domains: Option<Vec<String>>,
     #[serde(default)]
+    /// Domains to exclude (as `-site:` filters).
     pub exclude_domains: Option<Vec<String>>,
 }
 
+/// Tavily-compatible response body.
 #[derive(Serialize)]
 pub struct TavilyResponse {
+    /// The query echoed back.
     pub query: String,
+    /// Reserved for Tavily compatibility; always empty.
     pub follow_up_questions: Vec<String>,
+    /// Wall-clock time spent searching, in seconds.
     pub response_time: f64,
+    /// Optional answer, populated when `include_answer` is set.
     pub answer: Option<String>,
+    /// Image URLs, populated when `include_images` is set.
     pub images: Option<Vec<String>>,
+    /// The ranked search results.
     pub results: Vec<TavilyResult>,
 }
 
+/// One result of a Tavily-compatible search.
 #[derive(Serialize)]
 pub struct TavilyResult {
+    /// Page title of the result.
     pub title: String,
+    /// URL of the result.
     pub url: String,
+    /// Readable content snippet or description.
     pub content: String,
+    /// Positional relevance score (1.0 down to 0.05).
     pub score: f64,
+    /// Raw page text, populated when `include_raw_content` is set.
     pub raw_content: Option<String>,
 }
 
@@ -93,6 +119,9 @@ fn to_tavily_result(r: &ResultItem, pos: usize) -> (String, String, String, f64)
     }
 }
 
+/// `POST /search`: Tavily-compatible search. Accepts the same body shape as
+/// the Tavily API (query, optional `api_key`, `search_depth`, `topic`,
+/// `days`, `max_results`, `include_*` flags and domain filters).
 pub async fn search(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,

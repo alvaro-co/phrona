@@ -1,3 +1,5 @@
+//! Engine trait, registry and per-search shared state.
+
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
@@ -11,21 +13,28 @@ use crate::options::SearchOptions;
 
 /// Per-search context handed to every engine.
 pub struct EngineContext<'a> {
+    /// The HTTP client for this engine's requests.
     pub client: &'a HttpClient,
+    /// The search options for this search.
     pub opts: &'a SearchOptions,
     /// Shared cross-engine caches (vqd tokens, anti-bot tokens).
     pub shared: &'a EngineShared,
 }
 
+/// Shared cross-engine state for a search: caches for anti-bot tokens
+/// (DuckDuckGo `vqd`, Bing/Startpage `sc`) that engines fetch once and reuse
+/// across queries. Bounded and TTL-capped (1 hour).
 #[derive(Default)]
 pub struct EngineShared {
     /// `parking_lot::RwLock`: synchronous reads/writes, never blocks the
     /// async runtime (no `.await` involved).
     pub vqd: RwLock<HashMap<String, (Instant, String)>>,
+    /// Cached Bing/Startpage anti-bot `sc` token (timestamp + value).
     pub sc: RwLock<Option<(Instant, String)>>,
 }
 
 impl EngineShared {
+    /// Create an empty shared cache.
     pub fn new() -> Self {
         Self::default()
     }
@@ -34,6 +43,7 @@ impl EngineShared {
 const CACHE_TTL: Duration = Duration::from_secs(3600);
 
 impl EngineShared {
+    /// Read a `vqd` token by cache key if present and not expired.
     pub fn vqd_get(&self, key: &str) -> Option<String> {
         let m = self.vqd.read();
         m.get(key)
@@ -41,6 +51,8 @@ impl EngineShared {
             .map(|(_, v)| v.clone())
     }
 
+    /// Store a `vqd` token under `key`, evicting expired entries (and, if
+    /// still at capacity, the oldest token) to keep the cache bounded.
     pub fn vqd_set(&self, key: &str, value: String) {
         let mut m = self.vqd.write();
         // Bounded memory: under arbitrary queries the per-query token cache
@@ -66,6 +78,7 @@ impl EngineShared {
         m.insert(key.to_string(), (Instant::now(), value));
     }
 
+    /// Read the cached `sc` token if present and not expired.
     pub fn sc_get(&self) -> Option<String> {
         let m = self.sc.read();
         m.as_ref()
@@ -73,15 +86,22 @@ impl EngineShared {
             .map(|(_, v)| v.clone())
     }
 
+    /// Store the `sc` token, refreshing its timestamp.
     pub fn sc_set(&self, value: String) {
         *self.sc.write() = Some((Instant::now(), value));
     }
 }
 
+/// The interface every search engine implements. Implementations are
+/// stateless unit structs; per-search state lives in [`EngineContext`].
 #[async_trait]
 pub trait Engine: Send + Sync {
+    /// The engine's registered name (e.g. `"duckduckgo"`, `"bing_images"`).
     fn name(&self) -> &'static str;
+    /// The category this engine serves.
     fn category(&self) -> Category;
+    /// Run one search and return the raw results. Errors are structured
+    /// ([`crate::error::Error`]); never panic on malformed responses.
     async fn search(&self, ctx: &EngineContext<'_>) -> Result<Vec<RawResult>>;
 }
 
@@ -117,6 +137,8 @@ pub fn list() -> &'static [&'static dyn Engine] {
     ]
 }
 
+/// All engines of `category`, in priority order (best first). Use this to
+/// enumerate what will run for a search.
 pub fn engines_for(category: Category) -> Vec<&'static dyn Engine> {
     list()
         .iter()
@@ -125,6 +147,8 @@ pub fn engines_for(category: Category) -> Vec<&'static dyn Engine> {
         .collect()
 }
 
+/// Look up a registered engine by its exact name (e.g. `"duckduckgo"`,
+/// `"bing_images"`).
 pub fn engine_by_name(name: &str) -> Option<&'static dyn Engine> {
     list().iter().copied().find(|e| e.name() == name)
 }

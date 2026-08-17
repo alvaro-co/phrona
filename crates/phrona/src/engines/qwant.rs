@@ -1,3 +1,5 @@
+//! Qwant search engine.
+
 use async_trait::async_trait;
 
 use crate::engine::{Engine, EngineContext};
@@ -79,6 +81,7 @@ fn util_random_tgp() -> String {
     (rand::rng().random_range(1..=3)).to_string()
 }
 
+/// Parse a Qwant API v3 JSON response into [`RawResult`] items.
 pub fn parse_qwant(json: &serde_json::Value, engine: &str) -> Vec<RawResult> {
     let mut out = Vec::new();
     let mut pos = 0u32;

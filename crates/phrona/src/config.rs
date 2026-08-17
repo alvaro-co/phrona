@@ -114,6 +114,8 @@ fn default_profile() -> String {
     "chrome".to_string()
 }
 
+/// Settings for the REST API and MCP-over-TCP servers. Maps to the
+/// `server:` section of `phrona.yaml`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServerConfig {
     /// REST API bind address.
@@ -152,6 +154,8 @@ impl Default for ServerConfig {
     }
 }
 
+/// Search behavior defaults applied by all surfaces. Maps to the `search:`
+/// section of `phrona.yaml`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchConfig {
     /// Default search deadline in seconds.
@@ -179,6 +183,8 @@ impl Default for SearchConfig {
     }
 }
 
+/// SSRF and egress controls for outbound requests. Maps to the `security:`
+/// section of `phrona.yaml`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SecurityConfig {
     /// Refuse to connect to private/loopback/link-local IPs. The core
@@ -208,6 +214,8 @@ impl Default for SecurityConfig {
     }
 }
 
+/// Engine transport settings: proxy pool and browser impersonation profile.
+/// Maps to the `engines:` section of `phrona.yaml`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EnginesConfig {
     /// Proxy URLs (e.g. `socks5://127.0.0.1:9050`); one pooled HTTP client
@@ -233,12 +241,16 @@ impl Default for EnginesConfig {
 /// Typed YAML configuration for all Phrona surfaces.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct PhronaConfig {
+    /// REST/MCP server settings.
     #[serde(default)]
     pub server: ServerConfig,
+    /// Search defaults (timeout, limits, concurrency).
     #[serde(default)]
     pub search: SearchConfig,
+    /// SSRF/egress controls.
     #[serde(default)]
     pub security: SecurityConfig,
+    /// Engine transport (proxy pool, impersonation profile).
     #[serde(default)]
     pub engines: EnginesConfig,
 }

@@ -1,3 +1,5 @@
+//! Readable page extraction for AI grounding.
+
 use std::net::{IpAddr, Ipv4Addr};
 
 use futures::StreamExt;
@@ -81,10 +83,15 @@ pub fn is_safe_ip(ip: IpAddr) -> bool {
 /// A readable-text extraction of a web page (AI grounding).
 #[derive(Debug, Clone)]
 pub struct ExtractedPage {
+    /// The final URL after any redirects.
     pub url: String,
+    /// Page title, or the URL when no title exists.
     pub title: String,
+    /// `meta` description, or an empty string.
     pub description: String,
+    /// Main readable text, truncated/excerpted per the extraction options.
     pub text: String,
+    /// Absolute http(s) image URLs found on the page (up to 10).
     pub images: Vec<String>,
 }
 
@@ -127,7 +134,7 @@ fn push_capped(buf: &mut Vec<u8>, chunk: &[u8]) -> bool {
 /// SSRF guard: every hop (initial URL and each redirect) is parsed,
 /// DNS-resolved and validated against [`is_safe_ip`] *before* a request is
 /// sent; a private/restricted destination aborts immediately. Redirects are
-/// followed manually (max [`MAX_REDIRECTS`] hops) with the client's
+/// followed manually (max `MAX_REDIRECTS` hops) with the client's
 /// automatic redirect handling disabled.
 pub async fn extract(
     client: &HttpClient,

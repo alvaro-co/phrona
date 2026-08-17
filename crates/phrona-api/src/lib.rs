@@ -1,3 +1,13 @@
+//! # Phrona API
+//!
+//! The server surface for Phrona: a REST API plus an MCP-over-TCP endpoint,
+//! with rate limiting, API-key auth and a bundled web console.
+//!
+//! Build the router with [`router`] and serve it with `axum`, or run the
+//! whole thing with the `phrona serve` CLI.
+
+#![warn(missing_docs)]
+
 pub mod frontend;
 pub mod grounding;
 pub mod metrics;
@@ -36,9 +46,14 @@ struct RateWindow {
     count: u32,
 }
 
+/// Shared server state: the search client, rate limiter, API key and
+/// per-request bounds. Construct with [`AppState::new`].
 pub struct AppState {
+    /// The search client serving every endpoint.
     pub client: SearchClient,
+    /// Time the server started, used for `uptime_s`.
     pub started: Instant,
+    /// Optional API key; when set, requests must authenticate.
     pub api_key: Option<String>,
     /// Upper bound applied to `max_results` (from `search.max_results_limit`).
     pub max_results_limit: usize,
@@ -47,12 +62,14 @@ pub struct AppState {
     /// Maximum accepted request body size in bytes.
     pub max_body_bytes: u64,
     /// Reverse-proxy IPs whose `X-Forwarded-For` header is trusted for
-    /// client IP extraction (see [`client_ip`]).
+    /// client IP extraction (see the `client_ip` helper).
     pub trusted_proxies: Vec<IpAddr>,
     rate: Mutex<HashMap<Option<IpAddr>, RateWindow>>,
 }
 
 impl AppState {
+    /// Build server state from a ready [`SearchClient`] and the parsed
+    /// configuration values.
     pub fn new(
         client: SearchClient,
         api_key: Option<String>,
@@ -119,6 +136,9 @@ impl AppState {
     }
 }
 
+/// An API error with a JSON-friendly representation: bad request,
+/// unauthorized, rate limited, body too large, or an internal [`phrona`]
+/// failure.
 pub struct AppError(ErrorKind);
 
 enum ErrorKind {
@@ -339,6 +359,7 @@ pub struct HeaderAuth {
 }
 
 impl HeaderAuth {
+    /// The extracted API key, if any was supplied.
     pub fn key(&self) -> Option<&str> {
         self.key.as_deref()
     }

@@ -1,3 +1,5 @@
+//! Brave video search engine.
+
 use async_trait::async_trait;
 
 use crate::engine::{Engine, EngineContext};
@@ -52,6 +54,7 @@ impl Engine for BraveVideos {
     }
 }
 
+/// Parse a Brave videos HTML SERP into [`RawResult`] items.
 pub fn parse_brave_videos(html: &str, engine: &str) -> Vec<RawResult> {
     let mut out = Vec::new();
     let doc = parse::parse_html(html);

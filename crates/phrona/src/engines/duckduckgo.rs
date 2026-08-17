@@ -1,3 +1,5 @@
+//! DuckDuckGo web search engine.
+
 use async_trait::async_trait;
 
 use crate::engine::{Engine, EngineContext};

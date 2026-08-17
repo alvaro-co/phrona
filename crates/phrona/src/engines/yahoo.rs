@@ -1,3 +1,5 @@
+//! Yahoo web search engine.
+
 use async_trait::async_trait;
 
 use crate::engine::{Engine, EngineContext};
@@ -54,6 +56,8 @@ impl Engine for Yahoo {
     }
 }
 
+/// Parse a Yahoo web-search HTML SERP into [`RawResult`] items, unwrapping
+/// redirect URLs.
 pub fn parse_yahoo(html: &str, engine: &str) -> Vec<RawResult> {
     let doc = parse::parse_html(html);
     let mut out = Vec::new();

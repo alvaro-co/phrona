@@ -1,3 +1,5 @@
+//! Autocomplete suggestions from browser/engine sources.
+
 use crate::client::HttpClient;
 use crate::error::{Error, Result};
 use crate::parse;
@@ -5,16 +7,24 @@ use crate::parse;
 /// Autocomplete sources.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SuggestSource {
+    /// DuckDuckGo suggestions.
     DuckDuckGo,
+    /// Google suggestions.
     Google,
+    /// Bing suggestions.
     Bing,
+    /// Brave suggestions.
     Brave,
+    /// Startpage suggestions.
     Startpage,
+    /// Qwant suggestions.
     Qwant,
+    /// Wikipedia suggestions.
     Wikipedia,
 }
 
 impl SuggestSource {
+    /// All [`SuggestSource`] variants, in a stable order.
     pub const ALL: [SuggestSource; 7] = [
         SuggestSource::DuckDuckGo,
         SuggestSource::Google,
@@ -25,6 +35,7 @@ impl SuggestSource {
         SuggestSource::Wikipedia,
     ];
 
+    /// Return the source's stable name, e.g. `"duckduckgo"`.
     pub fn name(&self) -> &'static str {
         match self {
             SuggestSource::DuckDuckGo => "duckduckgo",
@@ -37,11 +48,14 @@ impl SuggestSource {
         }
     }
 
+    /// Look up a [`SuggestSource`] by its [`name`][`SuggestSource::name`],
+    /// returning `None` for unknown names.
     pub fn from_name(name: &str) -> Option<SuggestSource> {
         Self::ALL.iter().copied().find(|s| s.name() == name)
     }
 }
 
+/// Fetch autocomplete suggestions for `query` from a single [`SuggestSource`].
 pub async fn suggest(
     client: &HttpClient,
     source: SuggestSource,

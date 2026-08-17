@@ -1,3 +1,5 @@
+//! Page extraction and engine-test endpoints.
+
 use std::sync::Arc;
 
 use axum::Json;
@@ -46,6 +48,8 @@ pub struct TestParams {
     max_results: Option<usize>,
 }
 
+/// `GET /v1/extract?url=...`: header-auth variant of the page extraction
+/// endpoint.
 pub async fn extract_get(
     State(state): State<Arc<AppState>>,
     auth: HeaderAuth,
@@ -57,6 +61,7 @@ pub async fn extract_get(
     run_extract(&state, &p.url, p.max_chars, p.query.as_deref()).await
 }
 
+/// `POST /v1/extract`: body variant of the page extraction endpoint.
 pub async fn extract_post(
     State(state): State<Arc<AppState>>,
     headers: axum::http::HeaderMap,
@@ -79,6 +84,8 @@ async fn run_extract(
     Ok(Json(page))
 }
 
+/// `GET /v1/test`: probe engine availability across every category (or a
+/// single one) and return a per-category/per-engine report.
 pub async fn test(
     State(state): State<Arc<AppState>>,
     auth: HeaderAuth,

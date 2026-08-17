@@ -7,6 +7,8 @@
 //! phrona.extract("https://doc.rust-lang.org/book/")
 //! ```
 
+#![warn(missing_docs)]
+
 use std::sync::LazyLock;
 use std::time::Duration;
 

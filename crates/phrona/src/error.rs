@@ -1,3 +1,5 @@
+//! Structured errors with scope and kind classification.
+
 use std::fmt;
 use std::time::Duration;
 
@@ -23,32 +25,56 @@ pub enum ErrorScope {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ErrorKind {
     /// True HTTP 429 with an optional `Retry-After` hint.
-    RateLimited { retry_after: Option<Duration> },
+    RateLimited {
+        /// Optional seconds to wait before retrying, from `Retry-After`.
+        retry_after: Option<Duration>,
+    },
     /// Blocked by an anti-bot system.
     Blocked(BlockDetails),
     /// The response deviates from the expected schema and could not be
     /// parsed (DOM/Schema mutation, wrong content type, invalid JSON).
-    MalformedPayload { context: &'static str },
+    MalformedPayload {
+        /// Static description of the deviation.
+        context: &'static str,
+    },
     /// Upstream returned a non-2xx error status.
-    UpstreamUnavailable { status: u16 },
+    UpstreamUnavailable {
+        /// The HTTP status code returned.
+        status: u16,
+    },
     /// Every engine failed; the search as a whole produced nothing. Carries
     /// a short per-engine summary (`name: error`) for diagnostics.
-    AllProvidersFailed { details: Vec<String> },
+    AllProvidersFailed {
+        /// Per-engine `name: error` summaries.
+        details: Vec<String>,
+    },
     /// The request timed out.
     Timeout,
     /// The network failed (connect error, reset, TLS, ...).
     NetworkFailure,
     /// The request is invalid.
-    InvalidQuery { context: &'static str },
+    InvalidQuery {
+        /// Static description of what is invalid.
+        context: &'static str,
+    },
     /// A local/internal failure.
-    Internal { context: &'static str },
+    Internal {
+        /// Static description of the failure.
+        context: &'static str,
+    },
 }
 
+/// The specific anti-bot system that blocked a request, carried by
+/// [`ErrorKind::Blocked`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BlockDetails {
+    /// Challenge page served by Cloudflare.
     Cloudflare,
+    /// A CAPTCHA was required.
     Captcha,
+    /// The egress IP was banned.
     IpBan,
+    /// Generic bot detection (rate-based or fingerprinting).
     BotDetection,
 }
 
@@ -59,12 +85,16 @@ pub enum BlockDetails {
 /// a per-engine diagnostic summary.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Error {
+    /// The layer of the stack the failure belongs to.
     pub scope: ErrorScope,
+    /// The observable failure.
     pub kind: ErrorKind,
     /// Producing engine, or `"client"` / `"orchestrator"` for non-engine
     /// failures.
     pub engine: &'static str,
+    /// HTTP status when the failure carried one.
     pub http_status: Option<u16>,
+    /// Optional static message.
     pub message: Option<&'static str>,
 }
 
@@ -168,10 +198,12 @@ impl Error {
         }
     }
 
+    /// The layer of the stack the error belongs to ([`ErrorScope`]).
     pub fn scope(&self) -> ErrorScope {
         self.scope
     }
 
+    /// The observable failure ([`ErrorKind`]).
     pub fn kind(&self) -> &ErrorKind {
         &self.kind
     }
@@ -240,6 +272,7 @@ impl From<wreq::Error> for Error {
     }
 }
 
+/// Alias for `Result<T, Error>`.
 pub type Result<T> = std::result::Result<T, Error>;
 
 #[cfg(test)]

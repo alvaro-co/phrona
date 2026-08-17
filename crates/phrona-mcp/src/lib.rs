@@ -4,6 +4,8 @@
 //! Tools are compartmentalized per capability: per-category search,
 //! suggestions, page extraction and grounded search for RAG.
 
+#![warn(missing_docs)]
+
 use std::time::Duration;
 
 use rmcp::handler::server::wrapper::Parameters;

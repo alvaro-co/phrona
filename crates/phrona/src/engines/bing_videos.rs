@@ -1,3 +1,5 @@
+//! Bing video search engine.
+
 use async_trait::async_trait;
 
 use crate::engine::{Engine, EngineContext};
@@ -47,6 +49,8 @@ impl Engine for BingVideos {
     }
 }
 
+/// Parse a Bing videos asyncv2 HTML response into [`RawResult`] items,
+/// extracting the JSON metadata embedded in each result.
 pub fn parse_bing_videos(html: &str, engine: &str) -> Vec<RawResult> {
     // Bing wraps all result markup in <noscript>, which DOM parsers treat as
     // raw text; unwrap it so the nodes become visible.

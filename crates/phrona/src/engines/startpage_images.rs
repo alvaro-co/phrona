@@ -1,3 +1,5 @@
+//! Startpage image search engine.
+
 use async_trait::async_trait;
 
 use crate::engine::{Engine, EngineContext};
@@ -67,6 +69,8 @@ impl Engine for StartpageImages {
     }
 }
 
+/// Parse a Startpage images HTML SERP into [`RawResult`] items, unwrapping
+/// the React/JSON payload embedded in the page.
 pub fn parse_startpage_images(html: &str, engine: &str) -> Vec<RawResult> {
     let mut out = Vec::new();
     for marker in ["React.createElement(UIStartpage.AppSerpImages, {"] {

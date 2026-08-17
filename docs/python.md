@@ -20,7 +20,7 @@ cdylib as `phrona.so` into a venv site-packages.
 ```python
 import phrona
 
-phrona.version()                # "0.1.0"
+phrona.version()                # "0.1.1"
 
 phrona.engines("web")           # {'web': ["duckduckgo","google",...]}
 phrona.engines()                # {'web': [...], 'images': [...], 'news': [...],

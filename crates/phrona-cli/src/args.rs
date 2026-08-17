@@ -4,6 +4,8 @@ use clap::{Args, CommandFactory, Parser, Subcommand};
 
 use phrona::{Category, Profile, SearchOptions, TimeRange};
 
+/// Top-level CLI: global flags (`--json`, `--profile`, `--proxy`,
+/// `--timeout`) plus a subcommand.
 #[derive(Parser)]
 #[command(
     name = "phrona",
@@ -36,6 +38,7 @@ pub struct Cli {
     pub command: Command,
 }
 
+/// The `phrona` subcommands.
 #[derive(Subcommand)]
 pub enum Command {
     /// Search engines and print merged, ranked results
@@ -58,6 +61,7 @@ pub enum Command {
     Completions(CompletionsArgs),
 }
 
+/// Arguments for `phrona search`: merged, ranked results across engines.
 #[derive(Args)]
 pub struct SearchArgs {
     /// Search query
@@ -100,6 +104,7 @@ pub struct SearchArgs {
     pub page: u32,
 }
 
+/// Arguments for `phrona suggest`: query autocomplete from search sources.
 #[derive(Args)]
 pub struct SuggestArgs {
     /// Query prefix
@@ -114,6 +119,7 @@ pub struct SuggestArgs {
     pub region: String,
 }
 
+/// Arguments for `phrona extract`: readable text extraction from pages.
 #[derive(Args)]
 pub struct ExtractArgs {
     /// Page URLs (several may be given; they are fetched in parallel)
@@ -129,6 +135,8 @@ pub struct ExtractArgs {
     pub query: Option<String>,
 }
 
+/// Arguments for `phrona ground`: grounded search with a synthesized
+/// answer plus ranked sources.
 #[derive(Args)]
 pub struct GroundArgs {
     /// Search query
@@ -171,6 +179,7 @@ pub struct GroundArgs {
     pub page: u32,
 }
 
+/// Arguments for `phrona engines`: list engines for a category.
 #[derive(Args)]
 pub struct EnginesArgs {
     /// Filter by category
@@ -178,6 +187,8 @@ pub struct EnginesArgs {
     pub category: Option<Category>,
 }
 
+/// Arguments for `phrona test`: probe engine availability across
+/// categories.
 #[derive(Args)]
 pub struct TestArgs {
     /// Query used for the probe (default: "rust programming")
@@ -193,6 +204,8 @@ pub struct TestArgs {
     pub max_results: usize,
 }
 
+/// Arguments for `phrona serve`: start the REST API and MCP-over-TCP
+/// servers.
 #[derive(Args)]
 pub struct ServeArgs {
     /// REST API bind address (default: server.bind_addr)
@@ -216,6 +229,7 @@ pub struct ServeArgs {
     pub no_rest: bool,
 }
 
+/// Arguments for `phrona completions`: generate a shell completion script.
 #[derive(Args)]
 pub struct CompletionsArgs {
     /// Shell to generate completions for
@@ -223,6 +237,7 @@ pub struct CompletionsArgs {
     pub shell: String,
 }
 
+/// Parse a CLI category argument into a [`Category`], with a friendly error.
 pub fn category_parser(s: &str) -> Result<Category, String> {
     s.parse::<Category>().map_err(|_| {
         "invalid category, expected one of: web, images, news, videos, books".to_string()
@@ -248,6 +263,8 @@ fn profile_parser(s: &str) -> Result<Profile, String> {
 }
 
 impl Cli {
+    /// Build the base [`SearchOptions`] for a command: query plus the CLI
+    /// timeout (global `--timeout` defaults are resolved by the caller).
     pub fn base_options(
         &self,
         timeout: std::time::Duration,
@@ -259,6 +276,7 @@ impl Cli {
     }
 }
 
+/// Print the shell completion script for `shell` to stdout.
 pub fn print_completions(shell: &str) -> anyhow::Result<()> {
     let mut cmd = Cli::command();
     let shell = match shell {
