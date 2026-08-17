@@ -111,7 +111,9 @@ jobs:
         run: |
           rustup toolchain install stable --profile minimal
           rustup default stable
-          if [ "$RUNNER_OS" = "macOS" ] && [ "${{ matrix.arch }}" = "x86_64" ]; then rustup target add x86_64-apple-darwin; fi
+      - name: Add x86_64 target (macos cross-compile)
+        if: matrix.arch == 'x86_64' && runner.os == 'macOS'
+        run: rustup target add x86_64-apple-darwin
       - name: Build wheels
         uses: pypa/cibuildwheel@v2.23.2
         env:
