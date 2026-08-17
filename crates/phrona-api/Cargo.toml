@@ -7,9 +7,10 @@ rust-version.workspace = true
 documentation = "https://docs.rs/phrona-api"
 description = "REST API for the phrona library: search, suggestions, AI grounding, Tavily-compatible endpoint"
 repository.workspace = true
-homepage = "https://github.com/phrona/phrona"
+homepage = "https://github.com/alvaro-co/phrona"
 keywords = ["search", "api", "rest", "phrona"]
 categories = ["web-programming::http-server"]
+readme = "README.md"
 
 [dependencies]
 phrona = { workspace = true }

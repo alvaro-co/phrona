@@ -7,9 +7,10 @@ rust-version.workspace = true
 documentation = "https://docs.rs/phrona-cli"
 description = "Command-line interface to the phrona library: search, suggest, extract, ground, probe"
 repository.workspace = true
-homepage = "https://github.com/phrona/phrona"
+homepage = "https://github.com/alvaro-co/phrona"
 keywords = ["search", "cli", "phrona", "mcp"]
 categories = ["command-line-utilities"]
+readme = "README.md"
 
 [[bin]]
 name = "phrona"

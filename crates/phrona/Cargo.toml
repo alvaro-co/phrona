@@ -6,9 +6,10 @@ license.workspace = true
 rust-version.workspace = true
 description = "High-performance metasearch engine library for Rust and Python"
 repository.workspace = true
-homepage = "https://github.com/phrona/phrona"
+homepage = "https://github.com/alvaro-co/phrona"
 keywords = ["metasearch", "search-engine", "web-scraping", "serp", "aggregator"]
 categories = ["web-programming", "network-programming"]
+readme = "README.md"
 
 [dependencies]
 wreq = { workspace = true }

@@ -18,6 +18,19 @@ scripts/                   upstream drift monitor
 docs/                      full documentation
 ```
 
+## Published packages
+
+| Package | Install | crates.io / PyPI | docs.rs |
+| --- | --- | --- | --- |
+| `phrona` (Rust library) | `cargo add phrona` | [crates.io](https://crates.io/crates/phrona) | [docs.rs](https://docs.rs/phrona) |
+| `phrona-api` (REST server) | `cargo add phrona-api` | [crates.io](https://crates.io/crates/phrona-api) | [docs.rs](https://docs.rs/phrona-api) |
+| `phrona-mcp` (MCP server) | `cargo add phrona-mcp` | [crates.io](https://crates.io/crates/phrona-mcp) | [docs.rs](https://docs.rs/phrona-mcp) |
+| `phrona-cli` (binary `phrona`) | `cargo install phrona-cli` | [crates.io](https://crates.io/crates/phrona-cli) | [docs.rs](https://docs.rs/phrona-cli) |
+| `phrona` (Python bindings) | `pip install phrona` | [PyPI](https://pypi.org/project/phrona) | - |
+
+Each package has its own README with a quick start, so check the crates.io or
+PyPI page of the one you need.
+
 ## Quick start (CLI)
 
 ```bash
@@ -61,8 +74,7 @@ curl "localhost:8080/v1/search?q=rust&max_results=5"
 ## Quick start (Python)
 
 ```bash
-uv build                                    # produces dist/phrona-*.whl
-uv pip install dist/phrona-*.whl --python <venv python3.12>
+pip install phrona                       # pre-built wheels from PyPI
 ```
 
 ```python
@@ -71,7 +83,12 @@ phrona.search("rust programming", engines=["bing", "brave"])
 phrona.suggest("rus")
 ```
 
-Requires CPython <= 3.13 (pyo3 0.29).
+Requires CPython <= 3.13 (pyo3 0.29). To build from source instead:
+
+```bash
+uv build                                    # produces dist/phrona-*.whl
+uv pip install dist/phrona-*.whl --python <venv python3.12>
+```
 
 Pre-built wheels are published to PyPI for CPython 3.9-3.13 on linux
 (x86_64 / aarch64), macOS (x86_64 / arm64) and Windows (x86_64), plus an

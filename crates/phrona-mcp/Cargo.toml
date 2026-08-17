@@ -7,9 +7,10 @@ rust-version.workspace = true
 documentation = "https://docs.rs/phrona-mcp"
 description = "Model Context Protocol server exposing the phrona library to AI agents"
 repository.workspace = true
-homepage = "https://github.com/phrona/phrona"
+homepage = "https://github.com/alvaro-co/phrona"
 keywords = ["mcp", "ai", "agents", "search"]
 categories = ["web-programming"]
+readme = "README.md"
 
 [dependencies]
 phrona = { workspace = true }

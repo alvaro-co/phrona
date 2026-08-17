@@ -14,7 +14,7 @@ default-members = ["crates/*"]
 version = "0.1.1"
 edition = "2024"
 license = "AGPL-3.0-only"
-repository = "https://github.com/phrona/phrona"
+repository = "https://github.com/alvaro-co/phrona"
 rust-version = "1.85"
 
 [workspace.dependencies]

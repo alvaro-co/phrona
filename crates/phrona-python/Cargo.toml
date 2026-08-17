@@ -6,6 +6,7 @@ license.workspace = true
 rust-version.workspace = true
 documentation = "https://docs.rs/phrona-python"
 description = "Python bindings (pyo3) for the phrona library"
+readme = "README.md"
 
 [lib]
 name = "phrona"
