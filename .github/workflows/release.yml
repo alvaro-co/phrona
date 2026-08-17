@@ -29,7 +29,7 @@ jobs:
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             asset: zip
-          - os: macos-13
+          - os: macos-15
             target: x86_64-apple-darwin
             asset: tar.gz
           - os: macos-latest
@@ -92,7 +92,7 @@ jobs:
           - os: ubuntu-latest
             target: linux-aarch64
             arch: aarch64
-          - os: macos-13
+          - os: macos-15
             target: macos-x86_64
             arch: x86_64
           - os: macos-latest
