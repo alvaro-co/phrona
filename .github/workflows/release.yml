@@ -129,7 +129,7 @@ jobs:
           CIBW_MANYLINUX_AARCH64_IMAGE: manylinux2014
           # The x86_64 mac wheels are cross-compiled from arm64 runners;
           # 10.9 is below the SDK's floor, which delocate rejects.
-          CIBW_MACOSX_DEPLOYMENT_TARGET: "11.0"
+          CIBW_ENVIRONMENT_MACOS: 'MACOSX_DEPLOYMENT_TARGET=11.0'
           # btls-sys runs bindgen at build time; the manylinux images carry no
           # libclang and no clang resource dir, so install the pip-bundled
           # libclang and point bindgen at devtoolset's gcc headers.
