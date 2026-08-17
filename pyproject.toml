@@ -3,7 +3,7 @@ name = "phrona"
 version = "0.1.1"
 description = "High-performance metasearch engine library - Rust core with Python bindings"
 readme = "crates/phrona-python/README.md"
-requires-python = ">=3.9,<3.14"
+requires-python = ">=3.9"
 license = "AGPL-3.0-only"
 keywords = ["phrona", "search-engine", "web-search", "api", "mcp"]
 classifiers = [

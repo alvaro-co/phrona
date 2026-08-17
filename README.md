@@ -83,14 +83,14 @@ phrona.search("rust programming", engines=["bing", "brave"])
 phrona.suggest("rus")
 ```
 
-Requires CPython <= 3.13 (pyo3 0.29). To build from source instead:
+Requires CPython 3.9-3.14 (pyo3 0.29). To build from source instead:
 
 ```bash
 uv build                                    # produces dist/phrona-*.whl
 uv pip install dist/phrona-*.whl --python <venv python3.12>
 ```
 
-Pre-built wheels are published to PyPI for CPython 3.9-3.13 on linux
+Pre-built wheels are published to PyPI for CPython 3.9-3.14 on linux
 (x86_64 / aarch64), macOS (x86_64 / arm64) and Windows (x86_64), plus an
 sdist for everything else (needs a Rust toolchain + `uv build` / maturin).
 No musllinux wheels (btls-sys requires a musl C++ toolchain).

@@ -1,8 +1,7 @@
 # Python bindings reference
 
 `phrona` Python package built from `crates/phrona-python` with pyo3
-0.24. Python 3.9-3.13 (3.14 crashes in pyo3 0.24 - use a 3.13 or older
-interpreter).
+0.29. Python 3.9-3.14.
 
 ## Building the wheel
 

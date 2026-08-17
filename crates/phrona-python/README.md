@@ -11,7 +11,7 @@ ranked results.
 pip install phrona
 ```
 
-Wheels are published for CPython 3.9-3.13 on linux (x86_64 / aarch64),
+Wheels are published for CPython 3.9-3.14 on linux (x86_64 / aarch64),
 macOS (x86_64 / arm64) and Windows (x86_64), plus an sdist for other
 platforms (needs a Rust toolchain).
 

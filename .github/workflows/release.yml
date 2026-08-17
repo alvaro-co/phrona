@@ -118,22 +118,23 @@ jobs:
         uses: pypa/cibuildwheel@v4.2.0
         env:
           CIBW_ARCHS: ${{ matrix.arch }}
-          CIBW_BUILD: "cp39-* cp310-* cp311-* cp312-* cp313-*"
+          CIBW_BUILD: "cp39-* cp310-* cp311-* cp312-* cp313-* cp314-*"
           # btls-sys needs a musl C++ toolchain that does not exist for
           # manylinux containers; musllinux wheels are skipped.
           CIBW_SKIP: "*-musllinux*"
           CIBW_TEST_SKIP: "*"
-          # Keep the manylinux2014 images: the bindgen workaround below is
-          # validated against their devtoolset-10 layout.
-          CIBW_MANYLINUX_X86_64_IMAGE: manylinux2014
-          CIBW_MANYLINUX_AARCH64_IMAGE: manylinux2014
+          # manylinux2014 (CentOS 7, EOL) ships CPython up to 3.13 only, so
+          # cp314 wheels need manylinux_2_28.
+          CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
+          CIBW_MANYLINUX_AARCH64_IMAGE: manylinux_2_28
           # The x86_64 mac wheels are cross-compiled from arm64 runners;
           # 10.9 is below the SDK's floor, which delocate rejects.
           CIBW_ENVIRONMENT_MACOS: 'MACOSX_DEPLOYMENT_TARGET=11.0'
           # btls-sys runs bindgen at build time; the manylinux images carry no
           # libclang and no clang resource dir, so install the pip-bundled
-          # libclang and point bindgen at devtoolset's gcc headers.
-          CIBW_BEFORE_ALL_LINUX: "/opt/python/cp39-cp39/bin/pip install --target /opt/libclang libclang && ln -sfn $(ls -d /opt/rh/devtoolset-10/root/usr/lib/gcc/*/10/include | head -1) /opt/clang-gcc-includes && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal"
+          # libclang and point bindgen at the image's gcc headers (gcc-toolset
+          # on manylinux_2_28, falling back to the system gcc).
+          CIBW_BEFORE_ALL_LINUX: "/opt/python/cp39-cp39/bin/pip install --target /opt/libclang libclang && ln -sfn \"$(ls -d /opt/rh/gcc-toolset-*/root/usr/lib/gcc/*/*/include /usr/lib/gcc/*/*/include 2>/dev/null | head -1)\" /opt/clang-gcc-includes && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal"
           CIBW_ENVIRONMENT_LINUX: 'PATH=/root/.cargo/bin:$PATH LIBCLANG_PATH=/opt/libclang/clang/native BINDGEN_EXTRA_CLANG_ARGS="-idirafter /opt/clang-gcc-includes"'
       - name: Upload wheels
         uses: actions/upload-artifact@v7
@@ -180,7 +181,7 @@ jobs:
             Build artifacts:
             - `phrona`, `phrona-api`, `phrona-mcp` binaries
               (linux x86_64 / aarch64, windows x86_64, macos x86_64 / arm64)
-            - Python wheels for CPython 3.9-3.13
+            - Python wheels for CPython 3.9-3.14
               (linux x86_64 / aarch64, windows x86_64, macos x86_64 / arm64)
             - Source distribution (`phrona-*.tar.gz`)
 
