@@ -11,7 +11,7 @@ jobs:
     permissions:
       issues: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Check upstream drift
         id: drift
@@ -19,7 +19,7 @@ jobs:
           ./scripts/watch_upstream.sh --json > /tmp/drift.json || true
 
       - name: Open or update issue on drift
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const fs = require('fs');

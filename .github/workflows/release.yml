@@ -37,7 +37,7 @@ jobs:
             asset: tar.gz
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Rust toolchain
         run: |
@@ -75,7 +75,7 @@ jobs:
           sha256sum "dist/phrona-${{ matrix.target }}.zip" > "dist/phrona-${{ matrix.target }}.zip.sha256"
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: build-${{ matrix.target }}
           path: dist/
@@ -103,8 +103,8 @@ jobs:
             arch: AMD64
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Rust toolchain (host)
@@ -115,7 +115,7 @@ jobs:
         if: matrix.arch == 'x86_64' && runner.os == 'macOS'
         run: rustup target add x86_64-apple-darwin
       - name: Build wheels
-        uses: pypa/cibuildwheel@v2.23.2
+        uses: pypa/cibuildwheel@v4.2.0
         env:
           CIBW_ARCHS: ${{ matrix.arch }}
           CIBW_BUILD: "cp39-* cp310-* cp311-* cp312-* cp313-*"
@@ -123,13 +123,20 @@ jobs:
           # manylinux containers; musllinux wheels are skipped.
           CIBW_SKIP: "*-musllinux*"
           CIBW_TEST_SKIP: "*"
+          # Keep the manylinux2014 images: the bindgen workaround below is
+          # validated against their devtoolset-10 layout.
+          CIBW_MANYLINUX_X86_64_IMAGE: manylinux2014
+          CIBW_MANYLINUX_AARCH64_IMAGE: manylinux2014
+          # The x86_64 mac wheels are cross-compiled from arm64 runners;
+          # 10.9 is below the SDK's floor, which delocate rejects.
+          CIBW_MACOSX_DEPLOYMENT_TARGET: "11.0"
           # btls-sys runs bindgen at build time; the manylinux images carry no
           # libclang and no clang resource dir, so install the pip-bundled
           # libclang and point bindgen at devtoolset's gcc headers.
           CIBW_BEFORE_ALL_LINUX: "/opt/python/cp39-cp39/bin/pip install --target /opt/libclang libclang && ln -sfn $(ls -d /opt/rh/devtoolset-10/root/usr/lib/gcc/*/10/include | head -1) /opt/clang-gcc-includes && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal"
           CIBW_ENVIRONMENT_LINUX: 'PATH=/root/.cargo/bin:$PATH LIBCLANG_PATH=/opt/libclang/clang/native BINDGEN_EXTRA_CLANG_ARGS="-idirafter /opt/clang-gcc-includes"'
       - name: Upload wheels
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: wheels-${{ matrix.target }}
           path: wheelhouse/*.whl
@@ -138,8 +145,8 @@ jobs:
     name: build (source dist)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Build sdist
@@ -147,7 +154,7 @@ jobs:
           pip install --upgrade uv
           uv build --sdist
       - name: Upload sdist
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: wheels-sdist
           path: dist/*.tar.gz
@@ -157,13 +164,13 @@ jobs:
     needs: [build, wheel]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: artifacts
           merge-multiple: true
 
       - name: Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.ref_name }}
           name: ${{ github.ref_name }}
@@ -191,7 +198,7 @@ jobs:
     env:
       CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Rust toolchain
         run: |
           rustup toolchain install stable --profile minimal
@@ -212,7 +219,7 @@ jobs:
     env:
       PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true
