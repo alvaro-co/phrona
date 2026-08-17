@@ -114,6 +114,9 @@ jobs:
       - name: Add x86_64 target (macos cross-compile)
         if: matrix.arch == 'x86_64' && runner.os == 'macOS'
         run: rustup target add x86_64-apple-darwin
+      - name: Set up QEMU (linux aarch64)
+        if: matrix.target == 'linux-aarch64'
+        uses: docker/setup-qemu-action@v4.2.0
       - name: Build wheels
         uses: pypa/cibuildwheel@v4.2.0
         env:
