@@ -233,7 +233,7 @@ pub fn default_user_agent(profile: Profile) -> &'static str {
         // Random emulation: rotate through the known browser families so
         // clients do not share one cached UA for the process lifetime.
         Profile::Random => {
-            use rand::Rng;
+            use rand::RngExt;
             UA_POOL[rand::rng().random_range(0..UA_POOL.len())]
         }
         // Chrome and all versioned Chrome variants.
