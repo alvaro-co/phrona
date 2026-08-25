@@ -90,7 +90,7 @@ impl Engine for Qwant {
 }
 
 fn util_random_tgp() -> String {
-    use rand::Rng;
+    use rand::RngExt;
     (rand::rng().random_range(1..=3)).to_string()
 }
 

@@ -533,7 +533,7 @@ pub fn curl_get(
 /// Random alphanumeric token (`A-Za-z0-9-_`) used by Yahoo's URL tokens and
 /// Bing's per-request `cvid` values.
 pub fn random_token(len: usize) -> String {
-    use rand::Rng;
+    use rand::RngExt;
     const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
     let mut rng = rand::rng();
     (0..len)
