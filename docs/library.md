@@ -172,3 +172,12 @@ plain threads and from within async contexts.
 ## Feature flags
 
 None - the crate builds with default features.
+
+## Session refresh (opt-in)
+
+Engines listed in `bootstrap::SEEDS` can refresh their web sessions
+automatically when blocked. This is disabled by default - enable it
+explicitly with `SearchClient::with_auto_bootstrap(true)` or by setting
+`PHRONA_AUTO_BOOTSTRAP=1` in the environment. Sessions are cached in
+`phrona.cookies.json` next to the config file and reused across runs;
+no browser is ever launched unless one of those opt-ins is set.

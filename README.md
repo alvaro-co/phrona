@@ -190,9 +190,18 @@ cargo run -p phrona-examples --bin basic -- "rust"     # run the examples
 A few engines only return full results after a real-browser visit.
 Phrona keeps this strictly opt-in and self-contained:
 
+Any one of these opts in:
+
+```bash
+phrona --auto-bootstrap search ...        # per-invocation
+PHRONA_AUTO_BOOTSTRAP=1 phrona search ... # environment (works for library users too)
+```
+
+or in `phrona.yaml`:
+
 ```yaml
 engines:
-  auto_bootstrap: true   # default: false - never launched unless you ask
+  auto_bootstrap: true
 ```
 
 With that enabled, when one of those engines is blocked phrona briefly

@@ -70,6 +70,21 @@ pub struct SearchClient {
     auto_bootstrap: bool,
 }
 
+/// Environment opt-in for automatic session refresh. Accepts
+/// `PHRONA_AUTO_BOOTSTRAP` (canonical) and the config-layer alias
+/// `PHRONA_ENGINES_AUTO_BOOTSTRAP`; truthy values: 1/true/yes/on.
+fn env_auto_bootstrap() -> Option<bool> {
+    for key in ["PHRONA_AUTO_BOOTSTRAP", "PHRONA_ENGINES_AUTO_BOOTSTRAP"] {
+        if let Ok(v) = std::env::var(key) {
+            return Some(matches!(
+                v.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            ));
+        }
+    }
+    None
+}
+
 impl SearchClient {
     /// Build a client with default settings.
     pub fn new() -> Result<Self> {
@@ -93,8 +108,9 @@ impl SearchClient {
             shared: Arc::new(EngineShared::new()),
             concurrency: MAX_CONCURRENT_ENGINES,
             observer: Arc::new(NoopEngineObserver),
-            // opt-in: no browser is ever launched unless explicitly enabled
-            auto_bootstrap: false,
+            // opt-in: no browser is ever launched unless explicitly
+            // enabled via builder, config, or environment
+            auto_bootstrap: env_auto_bootstrap().unwrap_or(false),
         };
         // local cookie cache warm start (phrona.cookies.json next to the
         // config): restarts reuse harvested sessions instead of re-harvesting
@@ -137,10 +153,18 @@ impl SearchClient {
         Ok(client)
     }
 
-    /// Enable/disable silent headless cookie harvesting on blocks.
+    /// Enable/disable automatic session refresh via a brief headless
+    /// browser when a bootstrap engine is blocked. Off by default; the
+    /// `PHRONA_AUTO_BOOTSTRAP` environment variable sets the initial
+    /// value for every client.
     pub fn with_auto_bootstrap(mut self, enabled: bool) -> Self {
         self.auto_bootstrap = enabled;
         self
+    }
+
+    /// Whether automatic session refresh is currently enabled.
+    pub fn auto_bootstrap_enabled(&self) -> bool {
+        self.auto_bootstrap
     }
 
     /// Per-engine spacing between automatic harvest attempts.

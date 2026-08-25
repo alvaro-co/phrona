@@ -76,7 +76,8 @@ engines:
   bootstrap_cookies: {}
   # When true, phrona may briefly run a headless browser to refresh those
   # sessions automatically on blocks. Opt-in: default false, so no browser
-  # is ever launched unless you enable this or run `phrona bootstrap`.
+  # is ever launched unless enabled here, via `--auto-bootstrap`, via
+  # PHRONA_AUTO_BOOTSTRAP=1, or by running `phrona bootstrap <engine>`.
   auto_bootstrap: false
   # Browser impersonation profile: chrome, chrome149, chrome140, chrome131,
   # chrome120, chrome100, firefox, firefox139, firefox148, safari, safari26,

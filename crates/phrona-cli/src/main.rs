@@ -41,7 +41,7 @@ async fn main() -> Result<()> {
         (!proxies.is_empty()).then_some(proxies),
         phrona::TargetPolicy::default(),
     )?
-    .with_auto_bootstrap(cfg.engines.auto_bootstrap);
+    .with_auto_bootstrap(cli.auto_bootstrap || cfg.engines.auto_bootstrap);
     // config-provided bootstrap cookies first, then --cookie overrides
     for (engine, cookies) in cfg.bootstrap_cookies() {
         client = client.with_bootstrap_cookie(engine.clone(), cookies.clone());

@@ -35,6 +35,12 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub cookie: Vec<String>,
 
+    /// Allow a headless browser to refresh engine sessions automatically
+    /// when blocked (opt-in: off by default). Same as
+    /// `engines.auto_bootstrap: true` or `PHRONA_AUTO_BOOTSTRAP=1`
+    #[arg(long = "auto-bootstrap", global = true)]
+    pub auto_bootstrap: bool,
+
     /// Request timeout in seconds (default: search.timeout_secs, else 15)
     #[arg(long, global = true)]
     pub timeout: Option<u64>,
