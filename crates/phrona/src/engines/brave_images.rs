@@ -5,7 +5,7 @@ use async_trait::async_trait;
 use crate::engine::{Engine, EngineContext};
 use crate::engines::util;
 use crate::error::Result;
-use crate::models::{Category, RawResult, SafeSearch};
+use crate::models::{Category, RawResult};
 use crate::parse;
 
 /// Brave images (SSR HTML; JSON payload kept as fallback).
@@ -23,26 +23,13 @@ impl Engine for BraveImages {
 
     async fn search(&self, ctx: &EngineContext<'_>) -> Result<Vec<RawResult>> {
         let opts = ctx.opts;
-        let (lang, country) = opts.lang_country();
         let mut params: Vec<(&str, String)> =
             vec![("q", opts.query.clone()), ("source", "web".into())];
         if let Some(t) = &opts.time_range {
             params.push(("tf", crate::engines::util::time_param(t).to_string()));
         }
         let url = parse::with_query("https://search.brave.com/images", params);
-        let mut headers = wreq::header::HeaderMap::new();
-        let ss = match opts.safesearch {
-            SafeSearch::Strict => "strict",
-            SafeSearch::Moderate => "moderate",
-            SafeSearch::Off => "off",
-        };
-        headers.insert(
-            wreq::header::COOKIE,
-            wreq::header::HeaderValue::from_str(&format!(
-                "safesearch={ss}; useLocation=0; country={country}; ui_lang={lang}-{country}"
-            ))
-            .unwrap(),
-        );
+        let headers = crate::engines::brave::headers_for(opts);
         let resp = ctx.client.get_with_headers(&url, &headers).await?;
         util::check_response(self.name(), &resp, util::MediaType::Html)?;
         let body = util::read_body(resp, self.name()).await?;

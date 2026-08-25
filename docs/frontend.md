@@ -30,7 +30,9 @@ library:
 - JSON view toggle: the raw `/v1/search` response.
 - Pagination (prev/next).
 - The full query is kept in the URL hash: results are shareable and
-  survive reload (e.g. `/#q=rust&category=web&max_results=20`).
+  survive reload (e.g. `/#q=rust&category=web&max_results=20`); a link
+  opened with a hash restores every parameter and runs the search
+  immediately.
 
 **Tools** - the same operations as the `phrona` CLI, in the browser, each
 against the live API with a JSON view toggle:
@@ -45,8 +47,9 @@ against the live API with a JSON view toggle:
 
 When `PHRONA_API_KEY` is set on the server, enter the key in the topbar
 field (persisted in localStorage as `phrona-key`); it is sent as the
-`x-api-key` header and the `api_key` query parameter on every request.
-The theme preference is stored as `phrona-theme`.
+`x-api-key` header on every request - never in the URL, since the API
+rejects query-string credentials (they leak into logs). The theme
+preference is stored as `phrona-theme`.
 
 ## Files
 
@@ -69,3 +72,6 @@ editing them takes effect on reload without a rebuild.
 - `GET /v1/test?query=...&category=...&max_results=...`
 
 All responses are the shapes documented in [docs/api.md](api.md).
+
+The server also answers `/favicon.ico` and `/favicon.svg` with an inline
+SVG icon, so browsers never fall through to the SPA shell for it.

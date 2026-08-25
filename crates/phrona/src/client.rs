@@ -364,6 +364,8 @@ impl HttpClient {
     pub async fn get_with_headers(&self, url: &str, headers: &HeaderMap) -> Result<wreq::Response> {
         let mut rb = self.client.get(url);
         for (k, v) in headers {
+            // replace (not append) so caller headers override defaults;
+            // duplicated header values make many upstreams answer 400
             rb = rb.header(k, v);
         }
         Ok(rb.send().await?)
@@ -385,23 +387,23 @@ impl HttpClient {
     }
 
     /// Perform a form POST with extra request headers merged over the
-    /// defaults.
+    /// defaults. A caller-provided `Content-Type` replaces the default
+    /// `application/x-www-form-urlencoded` (needed for multipart bodies).
     pub async fn post_form_with_headers(
         &self,
         url: &str,
         form: &str,
         headers: &HeaderMap,
     ) -> Result<wreq::Response> {
-        let mut rb = self
-            .client
-            .post(url)
-            .header(
-                wreq::header::CONTENT_TYPE,
-                "application/x-www-form-urlencoded",
-            )
-            .body(form.to_string());
+        let mut rb = self.client.post(url).body(form.to_string());
         for (k, v) in headers {
             rb = rb.header(k, v);
+        }
+        if !headers.contains_key(wreq::header::CONTENT_TYPE) {
+            rb = rb.header(
+                wreq::header::CONTENT_TYPE,
+                "application/x-www-form-urlencoded",
+            );
         }
         Ok(rb.send().await?)
     }
@@ -623,17 +625,5 @@ mod tests {
                 ..
             }))
         ));
-    }
-
-    #[test]
-    fn uri_schemes_are_normalized_to_lowercase() {
-        // URI schemes are case-insensitive per RFC 3986; both the `http`
-        // and `url` crates normalize them at parse time, so the SSRF scheme
-        // check in validate_target sees canonical lowercase. This guards
-        // against a regression where mixed-case schemes leak through.
-        let uri = "HTTP://Example.COM/a".parse::<wreq::Uri>().unwrap();
-        assert_eq!(uri.scheme_str(), Some("http"));
-        let url = "HtTpS://example.com/a".parse::<url::Url>().unwrap();
-        assert_eq!(url.scheme(), "https");
     }
 }

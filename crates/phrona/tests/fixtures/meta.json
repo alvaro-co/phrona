@@ -1,158 +1,158 @@
 {
   "annas_archive.html": {
     "bytes": 757078,
-    "status": 200,
-    "content_type": "text/html",
-    "parsed": true
+    "content_type": "text/html; charset=UTF-8",
+    "parsed": true,
+    "status": 403
   },
   "bing_images.html": {
-    "bytes": 314507,
-    "status": 200,
-    "content_type": "text/html",
-    "parsed": true
+    "bytes": 314532,
+    "content_type": "text/html; charset=utf-8",
+    "parsed": true,
+    "status": 200
   },
   "bing_news.html": {
-    "bytes": 7301,
-    "status": 200,
-    "content_type": "text/html",
-    "parsed": true
+    "bytes": 13441,
+    "content_type": "text/html; charset=utf-8",
+    "parsed": true,
+    "status": 200
   },
   "bing_videos.html": {
-    "bytes": 243238,
-    "status": 200,
-    "content_type": "text/html",
-    "parsed": true
+    "bytes": 212490,
+    "content_type": "text/html; charset=utf-8",
+    "parsed": true,
+    "status": 200
   },
   "bing_web.html": {
-    "bytes": 124096,
-    "status": 200,
-    "content_type": "text/html",
-    "parsed": true
+    "bytes": 124322,
+    "content_type": "text/html; charset=utf-8",
+    "parsed": true,
+    "status": 200
   },
   "brave_images.html": {
-    "bytes": 666146,
-    "status": 200,
-    "content_type": "text/html",
-    "parsed": true
+    "bytes": 668004,
+    "content_type": "text/html; charset=utf-8",
+    "parsed": true,
+    "status": 200
   },
   "brave_news.html": {
-    "bytes": 201778,
-    "status": 200,
-    "content_type": "text/html",
-    "parsed": true
+    "bytes": 174836,
+    "content_type": "text/html; charset=utf-8",
+    "parsed": true,
+    "status": 200
   },
   "brave_videos.html": {
-    "bytes": 333311,
-    "status": 200,
-    "content_type": "text/html",
-    "parsed": true
+    "bytes": 333230,
+    "content_type": "text/html; charset=utf-8",
+    "parsed": true,
+    "status": 200
   },
   "brave_web.html": {
-    "bytes": 323273,
-    "status": 200,
-    "content_type": "text/html",
-    "parsed": true
+    "bytes": 274974,
+    "content_type": "text/html; charset=utf-8",
+    "parsed": true,
+    "status": 200
   },
   "ddg_images.json": {
-    "bytes": 122477,
-    "status": 200,
-    "content_type": "application/json",
-    "parsed": true
+    "bytes": 122166,
+    "content_type": "",
+    "parsed": true,
+    "status": 403
   },
   "ddg_news.json": {
-    "bytes": 7809,
-    "status": 200,
-    "content_type": "application/json",
-    "parsed": true
+    "bytes": 11850,
+    "content_type": "",
+    "parsed": true,
+    "status": 403
   },
   "ddg_videos.json": {
-    "bytes": 72475,
-    "status": 200,
-    "content_type": "application/json",
-    "parsed": true
+    "bytes": 72444,
+    "content_type": "",
+    "parsed": true,
+    "status": 403
   },
   "ddg_web.html": {
-    "bytes": 14235,
-    "status": 200,
-    "content_type": "text/html",
-    "parsed": false
+    "bytes": 33368,
+    "content_type": "text/html; charset=UTF-8",
+    "parsed": true,
+    "status": 200
   },
   "google_images.json": {
-    "bytes": 3387,
-    "status": 200,
-    "content_type": "text/html",
-    "parsed": false
+    "bytes": 15676,
+    "content_type": "application/json; charset=UTF-8",
+    "parsed": true,
+    "status": 200
   },
   "google_web.html": {
-    "bytes": 3402,
-    "status": 200,
-    "content_type": "text/html",
-    "parsed": false
+    "bytes": 91721,
+    "content_type": "text/html; charset=UTF-8",
+    "parsed": false,
+    "status": 200
   },
   "grokipedia.json": {
-    "bytes": 857,
-    "status": 200,
+    "bytes": 858,
     "content_type": "application/json",
-    "parsed": true
+    "parsed": true,
+    "status": 200
   },
   "marginalia_web.html": {
-    "bytes": 53087,
-    "status": 200,
-    "content_type": "text/html",
-    "parsed": true
+    "bytes": 53416,
+    "content_type": "text/html;charset=utf-8",
+    "parsed": true,
+    "status": 200
   },
   "mojeek_images.html": {
     "bytes": 337,
-    "status": 200,
-    "content_type": "text/html",
-    "parsed": false
+    "content_type": "text/html; charset=UTF-8",
+    "parsed": false,
+    "status": 403
   },
   "mojeek_web.html": {
     "bytes": 337,
-    "status": 200,
-    "content_type": "text/html",
-    "parsed": false
+    "content_type": "text/html; charset=UTF-8",
+    "parsed": false,
+    "status": 403
   },
   "qwant_web.json": {
     "bytes": 769,
-    "status": 200,
-    "content_type": "application/json",
-    "parsed": false
+    "content_type": "text/html;charset=utf-8",
+    "parsed": false,
+    "status": 403
   },
   "startpage_images.html": {
-    "bytes": 686981,
-    "status": 200,
-    "content_type": "text/html",
-    "parsed": true
+    "bytes": 689305,
+    "content_type": "text/html; charset=utf-8",
+    "parsed": true,
+    "status": 200
   },
   "startpage_web.html": {
-    "bytes": 240270,
-    "status": 200,
-    "content_type": "text/html",
-    "parsed": true
+    "bytes": 232048,
+    "content_type": "text/html; charset=utf-8",
+    "parsed": true,
+    "status": 200
   },
   "wikipedia_opensearch.json": {
     "bytes": 287,
-    "status": 200,
-    "content_type": "application/json",
-    "parsed": true
+    "content_type": "application/json; charset=utf-8",
+    "parsed": true,
+    "status": 200
   },
   "yahoo_news.html": {
-    "bytes": 168817,
-    "status": 200,
-    "content_type": "text/html",
-    "parsed": true
+    "bytes": 171100,
+    "content_type": "text/html; charset=utf-8",
+    "parsed": true,
+    "status": 200
   },
   "yahoo_web.html": {
-    "bytes": 226942,
-    "status": 200,
-    "content_type": "text/html",
-    "parsed": true
+    "bytes": 249569,
+    "content_type": "text/html; charset=utf-8",
+    "parsed": true,
+    "status": 200
   },
   "yandex_web.html": {
-    "bytes": 49329,
-    "status": 200,
-    "content_type": "text/html",
-    "parsed": false
+    "bytes": 49599,
+    "content_type": "text/html; charset=utf-8",
+    "parsed": true,
+    "status": 200
   }
 }

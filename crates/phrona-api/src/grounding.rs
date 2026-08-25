@@ -30,6 +30,21 @@ pub struct GroundingRequest {
     #[serde(default)]
     /// Optional time range filter (`day`, `week`, `month`, `year`).
     pub time_range: Option<String>,
+    #[serde(default)]
+    /// Optional comma-separated engine restriction (as in `/v1/search`).
+    pub engines: Option<String>,
+    #[serde(default)]
+    /// Optional region hint (`us-en`).
+    pub region: Option<String>,
+    #[serde(default)]
+    /// Optional language hint (`en`).
+    pub language: Option<String>,
+    #[serde(default)]
+    /// Optional safesearch level (`off`, `moderate`, `strict`).
+    pub safesearch: Option<String>,
+    #[serde(default)]
+    /// Optional engine-specific filter string.
+    pub filters: Option<String>,
 }
 
 /// GET /v1/grounding?query=... - same feature; auth is header-only.
@@ -46,6 +61,21 @@ pub struct GroundingGetParams {
     #[serde(default)]
     /// Optional time range filter (`day`, `week`, `month`, `year`).
     pub time_range: Option<String>,
+    #[serde(default)]
+    /// Optional comma-separated engine restriction (as in `/v1/search`).
+    pub engines: Option<String>,
+    #[serde(default)]
+    /// Optional region hint (`us-en`).
+    pub region: Option<String>,
+    #[serde(default)]
+    /// Optional language hint (`en`).
+    pub language: Option<String>,
+    #[serde(default)]
+    /// Optional safesearch level (`off`, `moderate`, `strict`).
+    pub safesearch: Option<String>,
+    #[serde(default)]
+    /// Optional engine-specific filter string.
+    pub filters: Option<String>,
 }
 
 /// The response to a grounding request: an extractive answer plus the
@@ -116,14 +146,7 @@ pub async fn get(
     if !state.authorized(auth.key()) {
         return Err(AppError::unauthorized());
     }
-    run(
-        &state,
-        &p.query,
-        p.max_results,
-        p.category.as_deref(),
-        p.time_range.as_deref(),
-    )
-    .await
+    run(&state, &params_from_get(&p)).await
 }
 
 /// `POST /v1/grounding`: body variant of the grounding endpoint; the API key
@@ -136,37 +159,88 @@ pub async fn post(
     if !state.authorized(crate::auth_key(&headers, p.api_key.as_deref()).as_deref()) {
         return Err(AppError::unauthorized());
     }
-    run(
-        &state,
-        &p.query,
-        p.max_results,
-        p.category.as_deref(),
-        p.time_range.as_deref(),
-    )
-    .await
+    run(&state, &params_from_post(&p)).await
 }
 
-async fn run(
-    state: &AppState,
-    query: &str,
+/// Shared option set between the GET and POST variants (minus auth).
+struct GroundingParams {
+    query: String,
     max_results: Option<usize>,
-    category: Option<&str>,
-    time_range: Option<&str>,
-) -> AppResult<Json<GroundingResponse>> {
-    let mut opts = SearchOptions::new(query.to_string());
-    opts.max_results = max_results.unwrap_or(10).clamp(1, 50);
-    if let Some(c) = category {
+    category: Option<String>,
+    time_range: Option<String>,
+    engines: Option<String>,
+    region: Option<String>,
+    language: Option<String>,
+    safesearch: Option<String>,
+    filters: Option<String>,
+}
+
+fn params_from_get(p: &GroundingGetParams) -> GroundingParams {
+    GroundingParams {
+        query: p.query.clone(),
+        max_results: p.max_results,
+        category: p.category.clone(),
+        time_range: p.time_range.clone(),
+        engines: p.engines.clone(),
+        region: p.region.clone(),
+        language: p.language.clone(),
+        safesearch: p.safesearch.clone(),
+        filters: p.filters.clone(),
+    }
+}
+
+fn params_from_post(p: &GroundingRequest) -> GroundingParams {
+    GroundingParams {
+        query: p.query.clone(),
+        max_results: p.max_results,
+        category: p.category.clone(),
+        time_range: p.time_range.clone(),
+        engines: p.engines.clone(),
+        region: p.region.clone(),
+        language: p.language.clone(),
+        safesearch: p.safesearch.clone(),
+        filters: p.filters.clone(),
+    }
+}
+
+async fn run(state: &AppState, p: &GroundingParams) -> AppResult<Json<GroundingResponse>> {
+    let mut opts = SearchOptions::new(p.query.clone());
+    // aligned with the CLI and web UI ground default
+    opts.max_results = p.max_results.unwrap_or(8).clamp(1, 50);
+    if let Some(c) = &p.category {
         opts.category = c.parse::<Category>().map_err(|_| {
             AppError::bad_request(
                 "invalid category, expected one of: web, images, news, videos, books",
             )
         })?;
     }
-    if let Some(t) = time_range {
+    if let Some(t) = &p.time_range {
         opts.time_range = Some(t.parse::<TimeRange>().map_err(|_| {
             AppError::bad_request("invalid time_range, expected day|week|month|year")
         })?);
     }
+    if let Some(e) = &p.engines {
+        opts.engines = e
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        for name in &opts.engines {
+            if phrona::engine::engine_by_name(name).is_none() {
+                return Err(AppError::bad_request(format!(
+                    "unknown engine '{name}'; see /v1/engines"
+                )));
+            }
+        }
+    }
+    opts.region = p.region.clone().filter(|r| !r.trim().is_empty());
+    opts.language = p.language.clone().filter(|l| !l.trim().is_empty());
+    if let Some(s) = &p.safesearch {
+        opts.safesearch = s.parse::<phrona::SafeSearch>().map_err(|_| {
+            AppError::bad_request("invalid safesearch, expected off|moderate|strict")
+        })?;
+    }
+    opts.filters = p.filters.clone().filter(|f| !f.trim().is_empty());
 
     let started = std::time::Instant::now();
     let resp = state.client.search(opts).await?;
@@ -174,7 +248,7 @@ async fn run(
 
     let mut sources: Vec<GroundingSource> = Vec::new();
     for (i, r) in resp.results.iter().enumerate() {
-        let score = (1.0 - i as f64 * 0.05).max(0.05);
+        let score = phrona::rank::positional_score(i);
         let (title, url, content) = match r {
             phrona::ResultItem::Web(w) => (&w.title, &w.url, &w.description),
             phrona::ResultItem::News(n) => (&n.title, &n.url, &n.description),

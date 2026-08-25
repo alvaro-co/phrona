@@ -17,6 +17,10 @@ const EMBEDDED_INDEX: &str = include_str!("../assets/index.html");
 const EMBEDDED_CSS: &str = include_str!("../assets/style.css");
 const EMBEDDED_JS: &str = include_str!("../assets/app.js");
 
+/// Minimal inline SVG favicon (magnifier over the phrona "p" roundel), so
+/// `/favicon.ico` answers with an icon instead of the SPA shell.
+const FAVICON_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="7" fill="#4f6df5"/><circle cx="14" cy="14" r="7" fill="none" stroke="#fff" stroke-width="3"/><line x1="19.5" y1="19.5" x2="26" y2="26" stroke="#fff" stroke-width="3" stroke-linecap="round"/></svg>"##;
+
 /// Resolve the frontend directory. `$PHRONA_FRONTEND_DIR` overrides the
 /// compile-time default so packaged binaries can serve the assets from a
 /// stable path.
@@ -64,6 +68,11 @@ pub async fn index(req: axum::extract::Request) -> Response {
         "" => serve("index.html", "text/html; charset=utf-8"),
         "style.css" => serve("style.css", "text/css; charset=utf-8"),
         "app.js" => serve("app.js", "text/javascript; charset=utf-8"),
+        // browsers hit this blindly; answer with a real icon instead of
+        // falling through to the SPA shell
+        "favicon.ico" | "favicon.svg" => {
+            ok_response(FAVICON_SVG.as_bytes().to_vec(), "image/svg+xml")
+        }
         _ => serve("index.html", "text/html; charset=utf-8"),
     }
 }

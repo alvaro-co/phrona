@@ -151,7 +151,17 @@ failed; otherwise results (possibly empty) are returned honestly.
 - `dedup::group(raw)` - groups results; empty-URL items become answer markers.
 - `rank::rank(groups, query)` - scores by cross-engine agreement (+1.5 per
   extra engine), position (10/pos, capped), Wikipedia/Grokipedia bonus, and
-  query-term text match on title/description.
+  query-term text match on title/description. Returns `(raw_score, group)`
+  pairs sorted best-first.
+- `rank::normalize_score(raw)` - derives the display score (0.001..0.999,
+  3 decimals) from a raw score without recomputing it.
+- `rank::positional_score(index)` - the shared positional score for
+  AI-facing surfaces (grounding sources, Tavily responses): 1.0 decaying
+  by 0.05 per position, floored at 0.05.
+- `options.probe_all = true` - run every resolved engine to completion
+  instead of early-exiting at `max_results` (availability probing); when
+  every engine then fails, the response still carries the full per-engine
+  report with `total: 0`.
 
 ## Sync vs async
 

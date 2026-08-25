@@ -13,7 +13,7 @@ use phrona::models::Category;
 use crate::{AppError, AppResult, AppState, HeaderAuth, JsonBody, JsonQuery};
 
 /// GET /v1/extract?url=...&max_chars=...&query=... - readable-text
-/// extraction of a page (the same feature as `ms extract`). Auth is
+/// extraction of a page (the same feature as `phrona extract`). Auth is
 /// header-only: query-string credentials are rejected.
 #[derive(Deserialize)]
 pub struct ExtractGetParams {
@@ -37,7 +37,7 @@ pub struct ExtractPostParams {
 }
 
 /// GET /v1/test?query=...&category=...&max_results=... - availability probe
-/// across every category (the same feature as `ms test`).
+/// across every category (the same feature as `phrona test`).
 #[derive(Deserialize)]
 pub struct TestParams {
     #[serde(default)]
@@ -110,6 +110,9 @@ pub async fn test(
         let mut opts = phrona::SearchOptions::new(query.clone());
         opts.category = cat;
         opts.max_results = max_results;
+        // availability probing must observe every engine, not stop at the
+        // first ones that fill max_results
+        opts.probe_all = true;
         match state.client.search(opts).await {
             Ok(resp) => out.push(json!({
                 "category": cat.as_str(),

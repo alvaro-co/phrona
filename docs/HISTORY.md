@@ -2,6 +2,69 @@
 
 A log of how Phrona was built, commit by commit.
 
+## (2026-08-25) session hardening: opt-in browser bootstrap, qwant pure-HTTP
+
+- **Browser use is now strictly opt-in.** `engines.auto_bootstrap`
+  defaults to *false*: phrona never launches a browser unless the
+  operator enables it in config (`engines.auto_bootstrap: true`), via
+  `PHRONA_ENGINES_AUTO_BOOTSTRAP=1`, or runs `phrona bootstrap <engine>`
+  explicitly. Cached cookies keep working either way - warm start loads
+  them without any browser involvement.
+- **qwant is pure HTTP.** The engine consumes an operator-provided or
+  cached session cookie but never spawns anything itself; the
+  experimental in-browser fetch path was removed.
+- Debug scaffolding removed (body dumps, per-engine trace prints);
+  warnings at zero across the workspace.
+- Documentation reviewed end to end to describe behaviour and
+  configuration without detailing internal flows.
+
+## (2026-08-25) self-contained headless bootstrap
+
+The cookie harvester is pure Rust (a minimal CDP-over-WebSocket client,
+no automation frameworks) and needs nothing from the environment:
+
+- Runs the browser fully headless with a consistent session identity;
+  the earlier virtual-display workaround is gone. Harvests take ~10-50 s
+  per engine and are rate-limited (minutes between attempts).
+- When no Chromium-family browser is installed, phrona downloads the
+  official `chrome-headless-shell` build into the user cache directory
+  on first use (~95 MB once, reused afterwards). No packages, no
+  privileges; works on bare servers and containers.
+  Env knobs: `PHRONA_NO_DOWNLOAD=1`, `PHRONA_BROWSER=/path`,
+  `PHRONA_CACHE_DIR`.
+- Verified on a simulated bare server (empty PATH): download -> harvest
+  -> live searches for google and anna's archive.
+
+## (2026-08-25) native silent bootstrap + dual transport
+
+- **`bootstrap.rs`**: silent orchestrator bypass - when a seeded engine
+  reports Blocked/NetworkFailure and auto-bootstrap is enabled, phrona
+  harvests a fresh session (rate-limited), stores it in
+  `phrona.cookies.json` next to the config, and re-runs just those
+  engines once. Warm start: every client loads the cache first, so
+  restarts reuse sessions without any browsing.
+- **annas_archive transport fallback**: some upstreams treat HTTP
+  clients differently, so after a failed mirror fetch the engine retries
+  through system curl with the same cookies (capped attempts).
+- **CLI**: `phrona bootstrap [engines...]`; global `--cookie
+  engine=header`; config `engines.bootstrap_cookies`.
+- Reality check: upstreams enforce reputation windows after heavy use -
+  expect occasional blocks that clear themselves; matrix shows 20-26 of
+  26 engines OK depending on the hour.
+
+## (2026-08-23) engines revived: google + anna's archive
+
+- **google web**: works with a real-browser session cookie
+  (`__Secure-ENID`) replayed over plain HTTP. False-block bug fixed:
+  healthy SERPs legitimately embed relay-page fragments as preload
+  handlers; block markers tightened to the two specific interstitial
+  phrases (+ regression test).
+- **annas_archive**: mirror list gained `.gl` (first, matching the
+  harvester seed); observed clearance lifetimes are short, so sessions
+  are re-harvested rather than assumed fresh. Book search verified live
+  (50 results).
+- qwant pre-wired for an operator-provided session cookie.
+
 ## (production hardening)
 
 - **Structured, allocation-free error system** (`error.rs`): `Error {

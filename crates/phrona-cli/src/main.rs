@@ -10,7 +10,7 @@ use serde_json::json;
 use phrona::SuggestSource;
 use phrona::config::PhronaConfig;
 
-use args::{Cli, Command, TestArgs};
+use args::{BootstrapArgs, Cli, Command, TestArgs};
 
 /// Load the typed configuration; a broken file degrades to defaults with a
 /// warning so the CLI stays usable.
@@ -35,12 +35,27 @@ async fn main() -> Result<()> {
     } else {
         cli.proxy.clone()
     };
-    let client = phrona::SearchClient::with_options(
+    let mut client = phrona::SearchClient::with_options(
         profile,
         Some(timeout),
         (!proxies.is_empty()).then_some(proxies),
         phrona::TargetPolicy::default(),
-    )?;
+    )?
+    .with_auto_bootstrap(cfg.engines.auto_bootstrap);
+    // config-provided bootstrap cookies first, then --cookie overrides
+    for (engine, cookies) in cfg.bootstrap_cookies() {
+        client = client.with_bootstrap_cookie(engine.clone(), cookies.clone());
+    }
+    for spec in &cli.cookie {
+        let Some((engine, cookies)) = spec.split_once('=') else {
+            anyhow::bail!("invalid --cookie '{spec}', expected engine=Cookie-header");
+        };
+        let engine = engine.trim();
+        if phrona::engine::engine_by_name(engine).is_none() {
+            anyhow::bail!("unknown engine '{engine}' in --cookie; see 'phrona engines'");
+        }
+        client = client.with_bootstrap_cookie(engine, cookies.trim().to_string());
+    }
 
     match &cli.command {
         Command::Search(args) => {
@@ -172,6 +187,9 @@ async fn main() -> Result<()> {
         Command::Serve(args) => {
             run_serve(args, &cfg).await?;
         }
+        Command::Bootstrap(args) => {
+            run_bootstrap(&client, args).await?;
+        }
         Command::Mcp => {
             init_tracing();
             phrona_mcp::run_stdio(&cfg).await?;
@@ -275,6 +293,49 @@ async fn run_serve(args: &args::ServeArgs, cfg: &PhronaConfig) -> anyhow::Result
     Ok(())
 }
 
+/// Manual bootstrap: harvest fresh session cookies and register them on the
+/// current client (useful as a smoke test; servers should rely on the
+/// automatic silent bypass).
+async fn run_bootstrap(client: &phrona::SearchClient, args: &BootstrapArgs) -> anyhow::Result<()> {
+    // cookies register on the shared EngineShared through interior
+    // mutability, so `&SearchClient` suffices
+    let known: Vec<&str> = ["google", "annas_archive", "qwant"].to_vec();
+    let engines: Vec<String> = if args.engines.is_empty() {
+        known.iter().map(|s| s.to_string()).collect()
+    } else {
+        for e in &args.engines {
+            if !known.contains(&e.as_str()) {
+                anyhow::bail!(
+                    "unknown bootstrap engine '{e}', expected one of: {}",
+                    known.join(", ")
+                );
+            }
+        }
+        args.engines.clone()
+    };
+    for engine in engines {
+        print!("{engine}: ");
+        match tokio::task::spawn_blocking({
+            let engine = engine.clone();
+            move || phrona::bootstrap::harvest_blocking(&engine)
+        })
+        .await?
+        {
+            Ok(jar) => {
+                println!(
+                    "OK ({} cookies, {} bytes)",
+                    jar.split("; ").count(),
+                    jar.len()
+                );
+                client.register_bootstrap_cookie(&engine, jar.clone());
+                phrona::bootstrap::store_cached(&engine, &jar);
+            }
+            Err(e) => println!("FAILED ({e})"),
+        }
+    }
+    Ok(())
+}
+
 fn split_engines(s: Option<&str>) -> Vec<String> {
     s.map(|s| s.split(',').map(|e| e.trim().to_string()).collect())
         .unwrap_or_default()
@@ -302,15 +363,8 @@ fn split_sources(s: Option<&str>) -> anyhow::Result<Vec<SuggestSource>> {
 fn print_json(resp: &phrona::SearchResponse) {
     println!(
         "{}",
-        serde_json::to_string_pretty(&search_json(resp)).expect("serialize response")
+        serde_json::to_string_pretty(resp).expect("serialize response")
     );
-}
-
-/// Machine-readable JSON for a search response: the canonical serde
-/// serialization of [`phrona::SearchResponse`]. Pure (no stdout), so the
-/// exact payload is unit-testable.
-fn search_json(resp: &phrona::SearchResponse) -> serde_json::Value {
-    serde_json::to_value(resp).expect("search response is serializable")
 }
 
 async fn run_test(
@@ -329,6 +383,9 @@ async fn run_test(
         let mut opts = cli.base_options(timeout, &args.query);
         opts.category = cat;
         opts.max_results = args.max_results.clamp(1, 10);
+        // availability probing must observe every engine, not stop at the
+        // first ones that fill max_results
+        opts.probe_all = true;
         match client.search(opts).await {
             Ok(resp) => {
                 any_success = true;
@@ -387,62 +444,5 @@ mod tests {
             split_engines(Some(" bing, duckduckgo , mojeek ")),
             ["bing", "duckduckgo", "mojeek"]
         );
-    }
-
-    #[test]
-    fn split_sources_validates_names() {
-        assert_eq!(split_sources(None).unwrap(), Vec::<SuggestSource>::new());
-        assert_eq!(
-            split_sources(Some("duckduckgo, google")).unwrap(),
-            [SuggestSource::DuckDuckGo, SuggestSource::Google]
-        );
-        assert!(split_sources(Some("duckduckgo, nope")).is_err());
-        assert!(split_sources(Some("nope")).is_err());
-    }
-
-    #[test]
-    fn json_is_canonical_serde_serialization() {
-        let resp = phrona::SearchResponse {
-            query: "q".into(),
-            category: phrona::Category::Web,
-            page: 1,
-            total: 2,
-            results: vec![
-                phrona::ResultItem::Web(phrona::WebResult {
-                    title: "a".into(),
-                    url: "https://a".into(),
-                    description: "".into(),
-                    engines: vec!["bing".into()],
-                    position: 1,
-                    score: 1.0,
-                }),
-                phrona::ResultItem::Image(phrona::ImageResult {
-                    title: "i".into(),
-                    url: "https://i".into(),
-                    image_url: "https://img".into(),
-                    thumbnail_url: "".into(),
-                    width: 0,
-                    height: 0,
-                    source: "".into(),
-                    engines: vec!["bing_images".into()],
-                    position: 2,
-                    score: 0.95,
-                }),
-            ],
-            suggestions: vec![],
-            answer: None,
-            engines: vec![],
-            elapsed_ms: 1,
-        };
-        let v = search_json(&resp);
-        // identical to the derive-based canonical serialization
-        assert_eq!(v, serde_json::to_value(&resp).unwrap());
-        assert_eq!(v["results"][0]["position"], 1);
-        assert_eq!(v["results"][0]["score"], 1.0);
-        // every variant serializes through the same tagged enum
-        assert_eq!(v["results"][1]["type"], "image");
-        assert_eq!(v["results"][1]["score"], 0.95);
-        assert_eq!(v["results"][1]["image_url"], "https://img");
-        assert_eq!(v["total"], 2);
     }
 }

@@ -11,6 +11,7 @@
 //! [`PhronaConfig::from_yaml_str`]. Every field has a default, so partial
 //! files and `phrona.yaml`-style snippets are valid.
 
+use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -45,6 +46,7 @@ pub const ENV_OVERRIDES: &[&str] = &[
     "PHRONA_SECURITY_DENIED_DOMAINS",
     "PHRONA_ENGINES_PROXIES",
     "PHRONA_ENGINES_PROFILE",
+    "PHRONA_ENGINES_AUTO_BOOTSTRAP",
 ];
 
 /// Errors produced while loading or interpreting a [`PhronaConfig`].
@@ -112,6 +114,13 @@ fn default_cache_ttl_secs() -> u64 {
 
 fn default_profile() -> String {
     "chrome".to_string()
+}
+
+fn default_auto_bootstrap() -> bool {
+    // opt-in: browser sessions are never launched unless the operator
+    // enables them (config, PHRONA_ENGINES_AUTO_BOOTSTRAP=1, or an
+    // explicit `phrona bootstrap <engine>` run)
+    false
 }
 
 /// Settings for the REST API and MCP-over-TCP servers. Maps to the
@@ -222,6 +231,19 @@ pub struct EnginesConfig {
     /// per proxy, used round-robin. Empty = direct connections.
     #[serde(default)]
     pub proxies: Vec<String>,
+    /// Per-engine session cookies earned in a real browser (see the
+    /// `webrief` companion tool), sent as the engine's `Cookie` header on
+    /// every request. Needed by engines whose anti-bot grants trust only to
+    /// real sessions: google (`__Secure-ENID`), qwant (`datadome`),
+    /// annas_archive (`aa_ddg_check`, `__ddg2_`). Values expire; refresh by
+    /// re-capturing.
+    #[serde(default)]
+    pub bootstrap_cookies: HashMap<String, String>,
+    /// Silently harvest fresh session cookies with the system Chromium
+    /// (headless, a few seconds) when a corresponding engine is blocked and
+    /// its cookies are missing/stale. Disable for fully static deployments.
+    #[serde(default = "default_auto_bootstrap")]
+    pub auto_bootstrap: bool,
     /// Browser impersonation profile: chrome, chrome149, chrome140,
     /// chrome131, chrome120, chrome100, firefox, firefox139, firefox148,
     /// safari, safari26, edge, edge148, opera, opera131, okhttp, random.
@@ -233,6 +255,8 @@ impl Default for EnginesConfig {
     fn default() -> Self {
         Self {
             proxies: Vec::new(),
+            bootstrap_cookies: HashMap::new(),
+            auto_bootstrap: default_auto_bootstrap(),
             profile: default_profile(),
         }
     }
@@ -372,6 +396,9 @@ impl PhronaConfig {
                 "PHRONA_SECURITY_DENIED_DOMAINS" => self.security.denied_domains = split_csv(value),
                 "PHRONA_ENGINES_PROXIES" => self.engines.proxies = split_csv(value),
                 "PHRONA_ENGINES_PROFILE" => self.engines.profile = value.clone(),
+                "PHRONA_ENGINES_AUTO_BOOTSTRAP" => {
+                    self.engines.auto_bootstrap = parse_bool(value).map_err(|e| bad(name, e))?
+                }
                 _ => return Err(ConfigError::Env(format!("unknown variable {name}"))),
             }
         }
@@ -431,6 +458,12 @@ impl PhronaConfig {
     /// proxy pool.
     pub fn search_client(&self) -> Result<SearchClient> {
         SearchClient::with_config(self)
+    }
+
+    /// The operator-supplied per-engine bootstrap cookies
+    /// (`engines.bootstrap_cookies`).
+    pub fn bootstrap_cookies(&self) -> &HashMap<String, String> {
+        &self.engines.bootstrap_cookies
     }
 }
 

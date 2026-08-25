@@ -37,7 +37,7 @@ impl Engine for BingVideos {
             params.push(("form", "VRFLTR".into()));
             params.push((
                 "qft",
-                format!(" filterui:videoage-lt{}", bing_time_minutes(t)),
+                format!("filterui:videoage-lt{}", bing_time_minutes(t)),
             ));
         }
         let url = parse::with_query("https://www.bing.com/videos/asyncv2", params);

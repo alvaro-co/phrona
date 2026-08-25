@@ -3,8 +3,8 @@
 use async_trait::async_trait;
 
 use crate::engine::{Engine, EngineContext};
-use crate::engines::bing_news::normalize_date;
 use crate::engines::util;
+use crate::engines::util::normalize_date;
 use crate::error::Result;
 use crate::models::{Category, RawResult};
 use crate::parse;
@@ -55,7 +55,9 @@ pub fn parse_yahoo_news(html: &str, engine: &str) -> Vec<RawResult> {
                 continue;
             }
             let date_raw = parse::select_text(&node, "span[class*='s-time']").unwrap_or_default();
-            let date_raw = date_raw.replace("&middot;", "").trim().to_string();
+            // HTML entities are already decoded by the parser, so only
+            // whitespace needs normalizing here.
+            let date_raw = parse::collapse(&date_raw);
             let published = normalize_date(&date_raw).or_else(|| {
                 if date_raw.is_empty() {
                     None

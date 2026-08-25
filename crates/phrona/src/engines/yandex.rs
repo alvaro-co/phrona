@@ -57,7 +57,8 @@ impl Engine for Yandex {
 pub fn parse_yandex(html: &str, engine: &str) -> Vec<RawResult> {
     let doc = parse::parse_html(html);
     let mut out = Vec::new();
-    let sel = scraper::Selector::parse("li.serp-item").unwrap();
+    // The site-search SERP marks organic entries `li.b-serp-item`.
+    let sel = scraper::Selector::parse("li.b-serp-item").unwrap();
     let mut pos = 0u32;
     for node in doc.select(&sel) {
         let title = parse::select_first_nonempty(&node, "h3");
@@ -66,6 +67,9 @@ pub fn parse_yandex(html: &str, engine: &str) -> Vec<RawResult> {
         if let (Some(title), Some(mut url)) = (title, href) {
             url = util::clean_url(&url);
             if !url.starts_with("http") {
+                continue;
+            }
+            if is_anti_bot_page(&title) {
                 continue;
             }
             let description = parse::select_text(&node, "div.b-serp-item__text")
@@ -83,6 +87,13 @@ pub fn parse_yandex(html: &str, engine: &str) -> Vec<RawResult> {
         }
     }
     out
+}
+
+/// The standard `/search` endpoint serves a "there are no search results"
+/// anti-bot page that still contains result-like markup; detect it so it is
+/// reported as a block instead of empty.
+fn is_anti_bot_page(title: &str) -> bool {
+    title.contains("no search results") || title.eq_ignore_ascii_case("something went wrong")
 }
 
 #[cfg(test)]

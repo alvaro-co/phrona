@@ -4,9 +4,8 @@ use async_trait::async_trait;
 
 use crate::engine::{Engine, EngineContext};
 use crate::engines::util;
-use crate::engines::util::ddg_vqd;
 use crate::error::Result;
-use crate::models::{Category, RawResult, SafeSearch};
+use crate::models::{Category, RawResult};
 use crate::parse;
 
 /// DuckDuckGo videos (JSON endpoint).
@@ -24,43 +23,34 @@ impl Engine for DuckDuckGoVideos {
 
     async fn search(&self, ctx: &EngineContext<'_>) -> Result<Vec<RawResult>> {
         let opts = ctx.opts;
-        let vqd = ddg_vqd(ctx, &opts.query).await?;
-        let p = match opts.safesearch {
-            SafeSearch::Strict => "1",
-            SafeSearch::Moderate => "-1",
-            SafeSearch::Off => "-2",
-        };
+        let p = util::ddg_safesearch(opts.safesearch);
         let mut f_parts: Vec<String> = Vec::new();
         if let Some(t) = &opts.time_range {
-            let val = match t {
-                crate::models::TimeRange::Day => "Day",
-                crate::models::TimeRange::Week => "Week",
-                crate::models::TimeRange::Month => "Month",
-                crate::models::TimeRange::Year => "Year",
-            };
-            f_parts.push(format!("publishedAfter:{val}"));
+            f_parts.push(format!("publishedAfter:{}", util::ddg_time_value(t)));
         }
         if let Some(extra) = &opts.filters {
             f_parts.push(extra.clone());
         }
-        let mut params: Vec<(&str, String)> = vec![
-            ("l", opts.region_param()),
-            ("o", "json".into()),
-            ("q", opts.query.clone()),
-            ("vqd", vqd),
-            ("p", p.into()),
-        ];
-        if !f_parts.is_empty() {
-            params.push(("f", f_parts.join(",")));
-        }
-        if opts.page > 1 {
-            params.push(("s", ((opts.page as usize - 1) * 60).to_string()));
-        }
-        let url = parse::with_query("https://duckduckgo.com/v.js", params);
-        let resp = ctx.client.get(&url).await?;
-        util::check_response(self.name(), &resp, util::MediaType::Json)?;
-        let body = util::read_body(resp, self.name()).await?;
-        let json = util::parse_json_body(self.name(), &body)?;
+        let page_offset = (opts.page as usize - 1) * 60;
+        let region = opts.region_param();
+        let query = opts.query.clone();
+        let json = util::fetch_ddg_vertical(ctx, self.name(), move |vqd| {
+            let mut params: Vec<(&str, String)> = vec![
+                ("l", region.clone()),
+                ("o", "json".into()),
+                ("q", query.clone()),
+                ("vqd", vqd.to_string()),
+                ("p", p.into()),
+            ];
+            if !f_parts.is_empty() {
+                params.push(("f", f_parts.join(",")));
+            }
+            if page_offset > 0 {
+                params.push(("s", page_offset.to_string()));
+            }
+            Ok(parse::with_query("https://duckduckgo.com/v.js", params))
+        })
+        .await?;
         Ok(parse_ddg_videos(&json, self.name()))
     }
 }

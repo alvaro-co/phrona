@@ -4,7 +4,7 @@ use async_trait::async_trait;
 
 use crate::engine::{Engine, EngineContext};
 use crate::engines::util;
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::models::{Category, RawResult};
 use crate::parse;
 
@@ -36,11 +36,12 @@ impl Engine for Wikipedia {
         let resp = ctx.client.get(&url).await?;
         util::check_response(self.name(), &resp, util::MediaType::Json)?;
         let body = util::read_body(resp, self.name()).await?;
-        let json: serde_json::Value = serde_json::from_slice(&body)
-            .map_err(|_| Error::schema("wikipedia", "invalid JSON response"))?;
+        let json = util::parse_json_body(self.name(), &body)?;
         let Some((title, url)) = parse_opensearch(&json) else {
             return Ok(Vec::new());
         };
+        // The extract call is best-effort enrichment: a failure here still
+        // yields the article link, just without a description.
         let mut description = String::new();
         let extract_url = parse::with_query(
             &format!("https://{lang}.wikipedia.org/w/api.php"),
@@ -56,7 +57,7 @@ impl Engine for Wikipedia {
         );
         if let Ok(resp) = ctx.client.get(&extract_url).await {
             if let Ok(bytes) = util::read_body(resp, self.name()).await {
-                if let Ok(ext) = serde_json::from_slice::<serde_json::Value>(&bytes) {
+                if let Ok(ext) = util::parse_json_body(self.name(), &bytes) {
                     if let Some(page) = ext
                         .pointer("/query/pages")
                         .and_then(|v| v.as_object())

@@ -109,19 +109,42 @@ fn global() -> &'static Metrics {
     METRICS.get_or_init(Metrics::new)
 }
 
+/// Normalizes a request path into a bounded-cardinality endpoint label.
+/// Known API routes keep their path; anything else (SPA fallbacks,
+/// arbitrary deep links, scanners) collapses into `"other"` so the
+/// unauthenticated `/metrics` output can never grow unbounded label sets.
+fn endpoint_label(path: &str) -> &'static str {
+    match path {
+        "/" => "/",
+        "/health" => "/health",
+        "/metrics" => "/metrics",
+        "/search" | "/v1/tavily" => "/search",
+        "/v1/search" => "/v1/search",
+        "/v1/suggest" => "/v1/suggest",
+        "/v1/extract" => "/v1/extract",
+        "/v1/test" => "/v1/test",
+        "/v1/grounding" => "/v1/grounding",
+        "/v1/engines" => "/v1/engines",
+        "/style.css" | "/app.js" | "/favicon.ico" | "/favicon.svg" => "static",
+        p if p.starts_with("/static/") => "static",
+        _ => "other",
+    }
+}
+
 /// Counts every HTTP request after the inner service responded: endpoint
-/// (request path) and status code are the only labels.
+/// (bounded label, see [`endpoint_label`]) and status code are the only
+/// labels.
 pub async fn http_layer(req: Request, next: Next) -> Response {
     let started = Instant::now();
-    let endpoint = req.uri().path().to_string();
+    let endpoint = endpoint_label(req.uri().path());
     let resp = next.run(req).await;
     let m = global();
     let status = resp.status().as_str().to_string();
     m.http_requests
-        .with_label_values(&[endpoint.as_str(), status.as_str()])
+        .with_label_values(&[endpoint, status.as_str()])
         .inc();
     m.http_duration
-        .with_label_values(&[&endpoint])
+        .with_label_values(&[endpoint])
         .observe(started.elapsed().as_secs_f64());
     resp
 }
@@ -176,6 +199,32 @@ pub async fn metrics_route() -> Response {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn endpoint_labels_are_bounded() {
+        for known in [
+            "/",
+            "/health",
+            "/metrics",
+            "/v1/search",
+            "/v1/suggest",
+            "/v1/extract",
+            "/v1/test",
+            "/v1/grounding",
+            "/v1/engines",
+        ] {
+            assert_eq!(endpoint_label(known), known);
+        }
+        // /search and /v1/tavily are aliases; they share one label
+        assert_eq!(endpoint_label("/search"), "/search");
+        assert_eq!(endpoint_label("/v1/tavily"), "/search");
+        assert_eq!(endpoint_label("/style.css"), "static");
+        assert_eq!(endpoint_label("/static/app.js"), "static");
+        // arbitrary paths must collapse - never become their own label
+        assert_eq!(endpoint_label("/favicon.ico"), "static");
+        assert_eq!(endpoint_label("/some/deep/spa/route"), "other");
+        assert_eq!(endpoint_label("/v1/search?q=x"), "other");
+    }
 
     // The registry is process-global, so all assertions share one test to
     // avoid parallel-test interference.

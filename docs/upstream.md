@@ -51,6 +51,16 @@ Python library for the DuckDuckGo backend. Borrowed from it:
 Monitor: this is the live, battle-tested reference for all DDG endpoints;
 changes here mean our DDG engines need updates.
 
+Drift notes (2026-08-23 audit):
+
+- ddgs has grown into a full multi-engine metasearch (text/images/news/
+  videos/books with bing/brave/google/mojeek/startpage/yahoo/yandex/
+  wikipedia/grokipedia backends). Its per-engine implementations are now
+  a useful second reference for our own engine set; the DDG images
+  engine still uses the identical `duckduckgo.com/?q=` vqd dance we do.
+- Its grokipedia backend matches ours (`/api/typeahead`, `results[0]`,
+  answer from `snippet`) - good sign that endpoint is still canonical.
+
 ## Websurfx (https://github.com/neon-mmd/websurfx) @ 09582be
 
 Rust metasearch engine. Borrowed from it:
@@ -102,3 +112,21 @@ re-verify with the fixture workflow, then bump the pin in
 cargo run -p phrona --bin fetch_fixtures -- bing
 cargo run -p phrona --bin dbg_parse -- bing
 ```
+
+## Upstream drift observed 2026-08-23 (live audit)
+
+What changed upstream since the last verification, and how phrona
+reacted:
+
+| Change | Reaction |
+| --- | --- |
+| Startpage fronted its SERP with **Anubis v1.25** proof-of-work | implemented natively (`engines/anubis.rs`); difficulty = leading zero hex digits of `SHA-256(randomData ++ nonce)` per the served worker JS |
+| Google images async payload moved `original_image` to the item level and serves `application/json` | parser + media-type expectation fixed; engine live again |
+| Yandex site-search markup renamed the result class to `b-serp-item` | selector fixed |
+| Bing news infinite-scroll `first` semantics clarified (page N starts at `(N-1)*10+1`) | off-by-one fixed |
+| Anna's Archive added ddos-guard/CHEQ interstitials on all mirrors | mirror list refreshed, failure classified as `UpstreamUnavailable`; engine needs residential proxies for now |
+| Qwant/Mojeek/Google-web tightened datacenter-IP enforcement | documented as IP-blocked; parsers unchanged and fixture-tested |
+
+Re-run this audit after any drift report by fetching each engine once
+(`phrona test --json`) and comparing against the status table in
+[engines.md](engines.md).

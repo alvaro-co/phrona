@@ -92,7 +92,7 @@ const saveLocation = (p) => {
 
 const restoreLocation = () => {
   const p = new URLSearchParams(location.hash.replace(/^#/, ""));
-  if (!p.get("q")) return;
+  if (!p.get("q")) return false;
   $("q").value = p.get("q");
   $("clear-btn").hidden = false;
   const cat = p.get("category");
@@ -109,6 +109,7 @@ const restoreLocation = () => {
   if (ss) $("safesearch").value = ss;
   if (p.get("engines")) state.engines = new Set(p.get("engines").split(",").filter(Boolean));
   renderEngines();
+  return true;
 };
 
 /* ===================== engines ===================== */
@@ -412,5 +413,10 @@ qsa("form.tool-form").forEach((form) => {
 /* ===================== init ===================== */
 
 loadEngines();
-if (!restoreLocation()) $("empty").hidden = false;
+if (restoreLocation()) {
+  // a shared link restores its full parameter set and runs immediately
+  doSearch();
+} else {
+  $("empty").hidden = false;
+}
 $("q").focus();

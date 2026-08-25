@@ -42,8 +42,10 @@
 
 #![warn(missing_docs)]
 
+pub mod bootstrap;
 pub mod client;
 pub mod config;
+pub mod crypto;
 pub mod dedup;
 pub mod engine;
 pub mod engines;

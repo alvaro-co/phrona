@@ -23,7 +23,9 @@ pub struct EngineContext<'a> {
 
 /// Shared cross-engine state for a search: caches for anti-bot tokens
 /// (DuckDuckGo `vqd`, Bing/Startpage `sc`) that engines fetch once and reuse
-/// across queries. Bounded and TTL-capped (1 hour).
+/// across queries. Bounded and TTL-capped (1 hour). Also carries
+/// operator-supplied bootstrap cookies (see
+/// [`EngineShared::bootstrap_for`]).
 #[derive(Default)]
 pub struct EngineShared {
     /// `parking_lot::RwLock`: synchronous reads/writes, never blocks the
@@ -31,12 +33,55 @@ pub struct EngineShared {
     pub vqd: RwLock<HashMap<String, (Instant, String)>>,
     /// Cached Bing/Startpage anti-bot `sc` token (timestamp + value).
     pub sc: RwLock<Option<(Instant, String)>>,
+    /// Operator-supplied per-engine `Cookie` header values earned in a real
+    /// browser session (e.g. Google's `__Secure-ENID`, Qwant's `datadome`,
+    /// Anna's Archive's ddos-guard clearance). See `PhronaConfig`.
+    pub(crate) bootstrap: RwLock<HashMap<String, String>>,
+    /// When each engine's cookies were last auto-harvested
+    /// ([`crate::bootstrap`]), guarding against re-harvest loops.
+    pub(crate) bootstrap_at: RwLock<HashMap<String, Instant>>,
 }
+
+/// Minimum interval between automatic headless harvests for one engine.
+pub const MIN_REHARVEST_INTERVAL: Duration = Duration::from_secs(600);
 
 impl EngineShared {
     /// Create an empty shared cache.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Register operator-supplied cookies for `engine` (replaces any prior
+    /// value). Empty `cookies` clears the entry.
+    pub fn set_bootstrap(&self, engine: &str, cookies: impl Into<String>) {
+        let c = cookies.into();
+        let mut m = self.bootstrap.write();
+        if c.is_empty() {
+            m.remove(engine);
+        } else {
+            m.insert(engine.to_string(), c);
+        }
+    }
+
+    /// The operator-supplied `Cookie` header value for `engine`, if any.
+    pub fn bootstrap_for(&self, engine: &str) -> Option<String> {
+        self.bootstrap.read().get(engine).cloned()
+    }
+
+    /// Record that `engine`'s cookies were just auto-harvested.
+    pub fn mark_bootstrap_refreshed(&self, engine: &str) {
+        self.bootstrap_at
+            .write()
+            .insert(engine.to_string(), Instant::now());
+    }
+
+    /// Whether enough time has passed since the last auto-harvest of
+    /// `engine` (`MIN_REHARVEST_INTERVAL`), or none happened yet.
+    pub fn bootstrap_stale(&self, engine: &str) -> bool {
+        match self.bootstrap_at.read().get(engine) {
+            Some(at) => at.elapsed() >= MIN_REHARVEST_INTERVAL,
+            None => true,
+        }
     }
 }
 
@@ -84,6 +129,11 @@ impl EngineShared {
         m.as_ref()
             .filter(|(at, _)| at.elapsed() < CACHE_TTL)
             .map(|(_, v)| v.clone())
+    }
+
+    /// Drop a cached `vqd` token (used when an upstream rejects it).
+    pub fn vqd_invalidate(&self, key: &str) {
+        self.vqd.write().remove(key);
     }
 
     /// Store the `sc` token, refreshing its timestamp.

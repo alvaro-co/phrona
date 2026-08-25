@@ -28,25 +28,14 @@ static RUNTIME: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| {
         .expect("tokio runtime")
 });
 
+/// Resolve an impersonation profile by name via the core library's table
+/// (single source of truth; drifts never happen).
 fn parse_profile(s: &str) -> PyResult<Profile> {
-    let name = s.trim().to_ascii_lowercase();
-    let p = match name.as_str() {
-        "chrome" | "chrome148" => Profile::Chrome,
-        "chrome100" => Profile::Chrome100,
-        "chrome120" => Profile::Chrome120,
-        "chrome131" => Profile::Chrome131,
-        "chrome140" => Profile::Chrome140,
-        "chrome149" => Profile::Chrome149,
-        "firefox" | "firefox148" => Profile::Firefox,
-        "firefox139" => Profile::Firefox139,
-        "edge" | "edge148" => Profile::Edge,
-        "safari" | "safari26" => Profile::Safari,
-        "opera" | "opera131" => Profile::Opera,
-        "okhttp" => Profile::OkHttp,
-        "random" => Profile::Random,
-        _ => return Err(PyValueError::new_err(format!("unknown profile '{s}'"))),
-    };
-    Ok(p)
+    Profile::from_name(s).ok_or_else(|| {
+        PyValueError::new_err(format!(
+            "unknown profile '{s}', expected one of: chrome, chrome100, chrome120, chrome131, chrome140, chrome149, firefox, firefox139, firefox148, safari, edge, opera, opera131, okhttp, random"
+        ))
+    })
 }
 
 fn parse_category(s: &str) -> PyResult<Category> {

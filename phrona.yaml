@@ -68,6 +68,16 @@ engines:
   # Proxy URLs; one impersonated HTTP client is pooled per proxy and used
   # round-robin across engines (sticky per search). Empty = direct.
   proxies: []
+  # Per-engine session cookies, only needed if you want to pin them
+  # manually (google __Secure-ENID, qwant datadome, annas_archive clearance).
+  # Some engines only return full results after a real-browser visit.
+  # Provide session cookies here (or via --cookie engine=header) and they
+  # are used directly; qwant in particular is pure HTTP + cookie.
+  bootstrap_cookies: {}
+  # When true, phrona may briefly run a headless browser to refresh those
+  # sessions automatically on blocks. Opt-in: default false, so no browser
+  # is ever launched unless you enable this or run `phrona bootstrap`.
+  auto_bootstrap: false
   # Browser impersonation profile: chrome, chrome149, chrome140, chrome131,
   # chrome120, chrome100, firefox, firefox139, firefox148, safari, safari26,
   # edge, edge148, opera, opera131, okhttp, random (default: chrome).

@@ -3,9 +3,11 @@
 use async_trait::async_trait;
 
 use crate::engine::{Engine, EngineContext};
-use crate::engines::util;
-use crate::error::Result;
-use crate::models::{Category, RawResult, SafeSearch};
+use crate::engines::{
+    google::GOOGLE_CONSENT_COOKIE, google::merged_cookie, google::safe_param, util,
+};
+use crate::error::{BlockDetails, Result};
+use crate::models::{Category, RawResult};
 use crate::parse;
 
 /// Google images (async ischj JSON).
@@ -30,43 +32,44 @@ impl Engine for GoogleImages {
             ("hl", lang.clone()),
             ("asearch", "isch".into()),
             ("async", format!("_fmt:json,p:1,ijn:{}", opts.page - 1)),
-            (
-                "safe",
-                match opts.safesearch {
-                    SafeSearch::Strict => "active",
-                    SafeSearch::Moderate => "moderate",
-                    SafeSearch::Off => "off",
-                }
-                .into(),
-            ),
+            ("safe", safe_param(opts.safesearch).into()),
         ];
         if opts.region.is_some() {
             params.push(("cr", format!("country{country}")));
         }
         if let Some(t) = &opts.time_range {
-            params.push((
-                "tbs",
-                format!("qdr:{}", crate::engines::util::time_param(t)),
-            ));
+            params.push(("tbs", format!("qdr:{}", util::time_param(t))));
         }
         let url = parse::with_query("https://www.google.com/search", params);
         let mut headers = wreq::header::HeaderMap::new();
-        headers.insert(
-            wreq::header::COOKIE,
-            wreq::header::HeaderValue::from_static("CONSENT=YES+"),
-        );
-        headers.insert(
-            wreq::header::USER_AGENT,
-            wreq::header::HeaderValue::from_static(
-                "Mozilla/5.0 (Linux; Android 8.0; Pixel 2) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36",
-            ),
-        );
+        // consent cookie (+ operator bootstrap session cookies, if any)
+        if let Some(c) = merged_cookie(ctx, self.name(), GOOGLE_CONSENT_COOKIE) {
+            if let Ok(v) = wreq::header::HeaderValue::from_str(&c) {
+                headers.insert(wreq::header::COOKIE, v);
+            }
+        }
         let resp = ctx.client.get_with_headers(&url, &headers).await?;
-        util::check_response(self.name(), &resp, util::MediaType::Html)?;
+        // The async endpoint serves `application/json`, not HTML.
+        util::check_response(self.name(), &resp, util::MediaType::Json)?;
         let body = util::read_body(resp, self.name()).await?;
         let text = String::from_utf8_lossy(&body);
+        if looks_blocked(&text) {
+            return Err(crate::error::Error::blocked(
+                self.name(),
+                BlockDetails::Captcha,
+            ));
+        }
         Ok(parse_google_images(&text, self.name()))
     }
+}
+
+/// Known Google block pages that arrive with HTTP 200 and a JSON-ish
+/// content type (the "detected unusual traffic" interstitial). Conservative:
+/// anything carrying real `ischj` data is never flagged.
+fn looks_blocked(text: &str) -> bool {
+    !text.contains("{\"ischj\":")
+        && (text.contains("detected unusual traffic")
+            || text.contains("unusual traffic from your computer"))
 }
 
 /// Parse a Google images `ischj` JSON payload (embedded in the search page
@@ -94,22 +97,21 @@ pub fn parse_google_images(text: &str, engine: &str) -> Vec<RawResult> {
             .get("page_title")
             .and_then(|t| t.as_str())
             .unwrap_or("");
-        let image = result
-            .get("original_image")
-            .and_then(|o| o.get("url"))
+        // `original_image` sits on the item level (sibling of `result`),
+        // not inside it.
+        let image = item
+            .pointer("/original_image/url")
             .and_then(|u| u.as_str())
             .unwrap_or("");
         if url.is_empty() || image.is_empty() {
             continue;
         }
-        let width = result
-            .get("original_image")
-            .and_then(|o| o.get("width"))
+        let width = item
+            .pointer("/original_image/width")
             .and_then(|v| v.as_u64())
             .unwrap_or(0) as u32;
-        let height = result
-            .get("original_image")
-            .and_then(|o| o.get("height"))
+        let height = item
+            .pointer("/original_image/height")
             .and_then(|v| v.as_u64())
             .unwrap_or(0) as u32;
         let mut source = item

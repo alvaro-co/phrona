@@ -23,21 +23,14 @@ impl Engine for BraveNews {
 
     async fn search(&self, ctx: &EngineContext<'_>) -> Result<Vec<RawResult>> {
         let opts = ctx.opts;
-        let (lang, country) = opts.lang_country();
         let mut params: Vec<(&str, String)> =
             vec![("q", opts.query.clone()), ("source", "web".into())];
         if let Some(t) = &opts.time_range {
             params.push(("tf", crate::engines::util::time_param(t).to_string()));
         }
         let url = parse::with_query("https://search.brave.com/news", params);
-        let mut headers = wreq::header::HeaderMap::new();
-        headers.insert(
-            wreq::header::COOKIE,
-            wreq::header::HeaderValue::from_str(&format!(
-                "safesearch=moderate; useLocation=0; country={country}; ui_lang={lang}-{country}"
-            ))
-            .unwrap(),
-        );
+        // honors the user's safesearch choice like every other Brave vertical
+        let headers = crate::engines::brave::headers_for(opts);
         let resp = ctx.client.get_with_headers(&url, &headers).await?;
         util::check_response(self.name(), &resp, util::MediaType::Html)?;
         let body = util::read_body(resp, self.name()).await?;

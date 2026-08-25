@@ -27,7 +27,22 @@ impl Engine for Grokipedia {
             [("query", ctx.opts.query.as_str()), ("limit", "1")],
         );
         let resp = ctx.client.get(&url).await?;
-        util::check_response(self.name(), &resp, util::MediaType::Json)?;
+        // their API intermittently serves 502/503 behind the edge; one
+        // immediate retry on a transient upstream error smooths that over
+        let resp = match util::check_response(self.name(), &resp, util::MediaType::Json) {
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    crate::error::ErrorKind::UpstreamUnavailable { status: 502..=504 }
+                ) =>
+            {
+                let retried = ctx.client.get(&url).await?;
+                util::check_response(self.name(), &retried, util::MediaType::Json)?;
+                retried
+            }
+            Err(e) => return Err(e),
+            Ok(()) => resp,
+        };
         let body = util::read_body(resp, self.name()).await?;
         let json: serde_json::Value = util::parse_json_body(self.name(), &body)?;
         Ok(parse_grokipedia(&json, self.name()))

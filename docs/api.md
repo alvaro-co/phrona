@@ -154,8 +154,10 @@ Response is the `ExtractedPage` shape:
 ## GET /v1/test
 
 Availability probe across every category (the same feature as
-`phrona test`): runs a real search per category and reports per-engine
-status, result counts and errors.
+`phrona test`): runs a real search per category with
+`SearchOptions::probe_all`, so **every** engine runs to completion and
+reports status, result counts and errors - even for categories where
+every engine failed.
 
 | Param | Default | Meaning |
 | --- | --- | --- |
@@ -238,7 +240,18 @@ otherwise the strongest snippets are stitched into an extractive summary.
 Query params (GET) or JSON body (POST):
 
 ```json
-{"query": "serde json", "api_key": "...", "max_results": 10, "category": "web", "time_range": "week"}
+{
+  "query": "serde json",
+  "api_key": "...",
+  "max_results": 8,
+  "category": "web",
+  "time_range": "week",
+  "engines": "bing,duckduckgo",
+  "region": "us-en",
+  "language": "en",
+  "safesearch": "moderate",
+  "filters": null
+}
 ```
 
 Response:
@@ -254,7 +267,12 @@ Response:
 }
 ```
 
-`max_results` clamps to 1-50 (default 10).
+`max_results` clamps to 1-50 (default 8, aligned with `phrona ground`
+and the web UI). All other parameters mirror `/v1/search` semantics;
+unknown engine names in `engines` are rejected with a 400. Source
+scores are positional (`phrona::rank::positional_score`: 1.0 decaying
+by 0.05 per position, floored at 0.05) - identical to the Tavily
+endpoint and MCP `search_grounded`.
 
 ## Frontend
 

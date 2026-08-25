@@ -28,6 +28,11 @@ pub struct SearchOptions {
     /// Engine-specific free-form filter string (e.g. DDG image filters
     /// "size:Large,color:red"). Passed through to engines that support it.
     pub filters: Option<String>,
+    /// Run every resolved engine to completion instead of cancelling
+    /// in-flight engines once `max_results` merged results exist. Used by
+    /// availability probing (`phrona test`, `/v1/test`) so every engine's
+    /// report is observed; normal searches keep the early exit for latency.
+    pub probe_all: bool,
     /// Overall search deadline (the streaming orchestrator cancels
     /// in-flight engines past this point).
     pub timeout: Duration,
@@ -46,6 +51,7 @@ impl Default for SearchOptions {
             language: None,
             time_range: None,
             filters: None,
+            probe_all: false,
             timeout: Duration::from_secs(10),
         }
     }

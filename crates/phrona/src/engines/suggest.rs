@@ -105,20 +105,28 @@ async fn fetch(
                 ("segment", "startpage.defaultffx"),
             ],
         ),
-        SuggestSource::Qwant => parse::with_query(
-            "https://api.qwant.com/v3/suggest",
-            [("q", query), ("locale", "en_US"), ("version", "2")],
-        ),
-        SuggestSource::Wikipedia => parse::with_query(
-            "https://en.wikipedia.org/w/api.php",
-            [
-                ("action", "opensearch"),
-                ("limit", "10"),
-                ("namespace", "0"),
-                ("format", "json"),
-                ("search", query),
-            ],
-        ),
+        SuggestSource::Qwant => {
+            // Qwant expects an uppercase-country locale (`en_US`); fall back
+            // to `en_US` when the region is not a `lang-country` pair.
+            let locale = qwant_locale(region);
+            parse::with_query(
+                "https://api.qwant.com/v3/suggest",
+                [("q", query), ("locale", locale.as_str()), ("version", "2")],
+            )
+        }
+        SuggestSource::Wikipedia => {
+            let lang = wikipedia_lang(region);
+            parse::with_query(
+                &format!("https://{lang}.wikipedia.org/w/api.php"),
+                [
+                    ("action", "opensearch"),
+                    ("limit", "10"),
+                    ("namespace", "0"),
+                    ("format", "json"),
+                    ("search", query),
+                ],
+            )
+        }
     };
     let resp = client.get(&url).await?;
     crate::engines::util::check_response(
@@ -129,6 +137,46 @@ async fn fetch(
     Ok(crate::engines::util::read_body(resp, source.name())
         .await?
         .to_vec())
+}
+
+/// Qwant API locale for a `lang-country` region (`us-en`/`en-us` -> `en_US`).
+/// A bare language maps onto itself as the country (`de` -> `de_DE`);
+/// an empty region falls back to `en_US`.
+pub fn qwant_locale(region: &str) -> String {
+    let region = region.trim();
+    if region.is_empty() {
+        return "en_US".into();
+    }
+    let (lang, country) = region
+        .split_once('-')
+        .map(|(country, lang)| (lang.trim(), country.trim()))
+        .unwrap_or((region, region));
+    let lang = if lang.is_empty() { "en" } else { lang };
+    format!("{}_{}", lang.to_lowercase(), country.to_uppercase())
+}
+
+/// Wikipedia language subdomain for a region. Regions here follow the
+/// engine convention `country-language` (`us-en`), but callers often pass
+/// BCP47-style `language-country` (`ja-jp`), so both parts are tried
+/// (language position first) against existing Wikipedia editions.
+pub fn wikipedia_lang(region: &str) -> String {
+    const EDITIONS: [&str; 24] = [
+        "en", "de", "fr", "es", "it", "ru", "ja", "zh", "pt", "ar", "fa", "id", "tr", "ko", "nl",
+        "pl", "sv", "uk", "vi", "cs", "hu", "ro", "fi", "no",
+    ];
+    let lower = region.trim().to_ascii_lowercase();
+    let mut it = lower.split('-').filter(|p| !p.is_empty());
+    let first = it.next();
+    let second = it.next();
+    // `country-language` convention puts the language second
+    // (`us-en`); BCP47-style input (`ja-jp`) puts it first - try both.
+    let candidates = [second, first, Some("en")];
+    for c in candidates.into_iter().flatten() {
+        if EDITIONS.contains(&c) {
+            return c.to_string();
+        }
+    }
+    unreachable!("'en' is always in EDITIONS")
 }
 
 /// Parse an autocomplete response body for a source. Pure function so
@@ -265,6 +313,17 @@ mod tests {
             assert_eq!(SuggestSource::from_name(s.name()), Some(s));
         }
         assert_eq!(SuggestSource::from_name("nope"), None);
+    }
+
+    #[test]
+    fn locales_derive_from_region() {
+        assert_eq!(qwant_locale("us-en"), "en_US");
+        assert_eq!(qwant_locale("de-de"), "de_DE");
+        assert_eq!(qwant_locale("de"), "de_DE");
+        assert_eq!(qwant_locale(""), "en_US");
+        assert_eq!(wikipedia_lang("de-de"), "de");
+        assert_eq!(wikipedia_lang("xx-yy"), "en");
+        assert_eq!(wikipedia_lang("ja-jp"), "ja");
     }
 
     #[test]

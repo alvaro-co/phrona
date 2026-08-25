@@ -1,6 +1,8 @@
 //! Concrete search engines and their parsers.
 
+pub mod altcha;
 pub mod annas_archive;
+pub mod anubis;
 pub mod bing;
 pub mod bing_images;
 pub mod bing_news;

@@ -4,9 +4,8 @@ use async_trait::async_trait;
 
 use crate::engine::{Engine, EngineContext};
 use crate::engines::util;
-use crate::engines::util::ddg_vqd;
 use crate::error::Result;
-use crate::models::{Category, RawResult, SafeSearch};
+use crate::models::{Category, RawResult};
 use crate::parse;
 
 /// DuckDuckGo news (JSON endpoint).
@@ -24,31 +23,29 @@ impl Engine for DuckDuckGoNews {
 
     async fn search(&self, ctx: &EngineContext<'_>) -> Result<Vec<RawResult>> {
         let opts = ctx.opts;
-        let vqd = ddg_vqd(ctx, &opts.query).await?;
-        let p = match opts.safesearch {
-            SafeSearch::Strict => "1",
-            SafeSearch::Moderate => "-1",
-            SafeSearch::Off => "-2",
-        };
-        let mut params: Vec<(&str, String)> = vec![
-            ("l", opts.region_param()),
-            ("o", "json".into()),
-            ("noamp", "1".into()),
-            ("q", opts.query.clone()),
-            ("vqd", vqd),
-            ("p", p.into()),
-        ];
-        if let Some(t) = &opts.time_range {
-            params.push(("df", crate::engines::util::time_param(t).to_string()));
-        }
-        if opts.page > 1 {
-            params.push(("s", ((opts.page as usize - 1) * 30).to_string()));
-        }
-        let url = parse::with_query("https://duckduckgo.com/news.js", params);
-        let resp = ctx.client.get(&url).await?;
-        util::check_response(self.name(), &resp, util::MediaType::Json)?;
-        let body = util::read_body(resp, self.name()).await?;
-        let json = util::parse_json_body(self.name(), &body)?;
+        let p = util::ddg_safesearch(opts.safesearch);
+        let time = opts.time_range.map(|t| util::time_param(&t).to_string());
+        let page_offset = (opts.page as usize - 1) * 30;
+        let region = opts.region_param();
+        let query = opts.query.clone();
+        let json = util::fetch_ddg_vertical(ctx, self.name(), move |vqd| {
+            let mut params: Vec<(&str, String)> = vec![
+                ("l", region.clone()),
+                ("o", "json".into()),
+                ("noamp", "1".into()),
+                ("q", query.clone()),
+                ("vqd", vqd.to_string()),
+                ("p", p.into()),
+            ];
+            if let Some(t) = &time {
+                params.push(("df", t.clone()));
+            }
+            if page_offset > 0 {
+                params.push(("s", page_offset.to_string()));
+            }
+            Ok(parse::with_query("https://duckduckgo.com/news.js", params))
+        })
+        .await?;
         Ok(parse_ddg_news(&json, self.name()))
     }
 }

@@ -13,7 +13,7 @@ name = "phrona"
 crate-type = ["cdylib"]
 
 [dependencies]
-phrona-core = { package = "phrona", path = "../phrona", version = "0.1.0" }
+phrona-core = { package = "phrona", path = "../phrona", version = "0.1.1" }
 pyo3 = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }

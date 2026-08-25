@@ -37,6 +37,9 @@ fn raw_score(g: &GroupedResult, terms: &[String]) -> f64 {
 
 /// Relevance scoring: engines rank results per-position; we blend
 /// cross-engine frequency, per-engine position, and content matching.
+/// Returns `(raw_score, group)` pairs sorted best-first. The raw score can
+/// be turned into the display score with [`normalize_score`] without
+/// recomputing it.
 pub fn rank(groups: Vec<GroupedResult>, query: &str) -> Vec<(f64, GroupedResult)> {
     let terms = query_terms(query);
     let mut scored: Vec<(f64, GroupedResult)> = groups
@@ -48,14 +51,28 @@ pub fn rank(groups: Vec<GroupedResult>, query: &str) -> Vec<(f64, GroupedResult)
     scored
 }
 
+/// Normalize an already-computed raw score into the display score bounded
+/// strictly between 0.001 and 1.000, rounded to 3 decimals. Monotonic in
+/// the raw score. Equivalent to [`calculate_score`] without the recompute.
+pub fn normalize_score(raw: f64) -> f64 {
+    let norm = raw / (1.0 + raw);
+    let rounded = (norm * 1000.0).round() / 1000.0;
+    rounded.clamp(0.001, 0.999)
+}
+
+/// Positional relevance score for AI-facing surfaces (grounding sources,
+/// Tavily-compatible responses): 1.0 at position 0, decaying by 0.05 per
+/// result, floored at 0.05. Shared so every surface reports identical
+/// scores for the same ordering.
+pub fn positional_score(index: usize) -> f64 {
+    (1.0 - index as f64 * 0.05).max(0.05)
+}
+
 /// Unified cross-category score for a grouped result, normalized to a float
 /// bounded strictly between 0.001 and 1.000 (rounded to 3 decimal places).
 /// Higher is better; the value is monotonic in the raw score.
 pub fn calculate_score(grouped: &GroupedResult, query_terms: &[String]) -> f64 {
-    let raw = raw_score(grouped, query_terms);
-    let norm = raw / (1.0 + raw);
-    let rounded = (norm * 1000.0).round() / 1000.0;
-    rounded.clamp(0.001, 0.999)
+    normalize_score(raw_score(grouped, query_terms))
 }
 
 /// BM25-style term match: saturating term-frequency weighting
@@ -258,5 +275,23 @@ mod tests {
         // BM25: title match beats none
         let none = group("totally unrelated", "https://a.com", "x", "bing", 1);
         assert!(calculate_score(&base, &terms) > calculate_score(&none, &terms));
+    }
+
+    #[test]
+    fn positional_score_decays_with_floor() {
+        assert_eq!(positional_score(0), 1.0);
+        assert_eq!(positional_score(4), 0.8);
+        assert_eq!(positional_score(19), 0.05);
+        assert_eq!(positional_score(100), 0.05);
+    }
+
+    #[test]
+    fn normalize_score_matches_calculate_score() {
+        let g = group("rust book", "https://a.com", "rust programming", "bing", 1);
+        let raw = raw_score(&g, &query_terms("rust book"));
+        assert_eq!(
+            normalize_score(raw),
+            calculate_score(&g, &query_terms("rust book"))
+        );
     }
 }

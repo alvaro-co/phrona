@@ -44,7 +44,7 @@ Nine tools, each with JSON Schema parameters (generated with schemars):
 | `suggest` | query completions (query, source, region) |
 | `fetch_page` | extract a page: title, description, text (max_chars, query bias) |
 | `search_grounded` | RAG: search + pick best page + return verbatim excerpt and ranked sources |
-| `list_engines` | available engines per category |
+| `list_engines` | available engines per category (invalid categories return an error envelope) |
 
 Tool call results are `text/plain` content containing JSON.
 

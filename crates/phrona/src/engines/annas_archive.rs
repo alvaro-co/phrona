@@ -13,7 +13,15 @@ use crate::parse;
 /// the first one that responds with a parseable SERP.
 pub struct AnnasArchive;
 
-const ANNAS_DOMAINS: &[&str] = &["annas-archive.gd", "annas-archive.se", "annas-archive.org"];
+/// Known mirrors, tried in order. `.gl` first: that is the domain the
+/// bootstrap harvester visits, and its session cookie is (partially)
+/// domain-scoped. Domains rotate after TLD seizures.
+const ANNAS_DOMAINS: &[&str] = &[
+    "annas-archive.gl",
+    "annas-archive.gd",
+    "annas-archive.li",
+    "annas-archive.se",
+];
 
 #[async_trait]
 impl Engine for AnnasArchive {
@@ -28,6 +36,9 @@ impl Engine for AnnasArchive {
     async fn search(&self, ctx: &EngineContext<'_>) -> Result<Vec<RawResult>> {
         let opts = ctx.opts;
         let mut last_err: Option<Error> = None;
+        let mut fallbacks = 0usize;
+        // operator- or bootstrap-provided session cookie
+        let bootstrap = ctx.shared.bootstrap_for(self.name());
         for domain in ANNAS_DOMAINS {
             let url = parse::with_query(
                 &format!("https://{domain}/search"),
@@ -36,24 +47,87 @@ impl Engine for AnnasArchive {
                     ("page", opts.page.to_string().as_str()),
                 ],
             );
-            match ctx.client.get(&url).await {
+            let dbg = std::env::var_os("PHRONA_DEBUG_ANNAS").is_some();
+            if dbg {
+                eprintln!("[dbg] mirror {domain} bootstrap={}", bootstrap.is_some());
+            }
+            let mut headers = wreq::header::HeaderMap::new();
+            if let Some(c) = &bootstrap {
+                if let Ok(v) = wreq::header::HeaderValue::from_str(c) {
+                    headers.insert(wreq::header::COOKIE, v);
+                }
+            }
+            let req = async {
+                if bootstrap.is_some() {
+                    ctx.client.get_with_headers(&url, &headers).await
+                } else {
+                    ctx.client.get(&url).await
+                }
+            };
+            match req.await {
                 Ok(resp) => match util::check_response(self.name(), &resp, util::MediaType::Html) {
                     Ok(()) => match util::read_body(resp, self.name()).await {
                         Ok(body) => {
                             let text = String::from_utf8_lossy(&body);
+                            if dbg {
+                                eprintln!("[dbg] {domain} client len={}", text.len());
+                            }
                             let results = parse_annas(&text, self.name(), domain);
                             if !results.is_empty() {
                                 return Ok(results);
                             }
                         }
-                        Err(e) => last_err = Some(e),
+                        Err(e) => {
+                            if dbg {
+                                eprintln!("[dbg] {domain} body err: {e}");
+                            }
+                            last_err = Some(e);
+                        }
                     },
-                    Err(e) => last_err = Some(e),
+                    Err(e) => {
+                        if dbg {
+                            eprintln!("[dbg] {domain} classify err: {e}");
+                        }
+                        last_err = Some(e);
+                    }
                 },
-                Err(e) => last_err = Some(e),
+                Err(e) => {
+                    if dbg {
+                        eprintln!("[dbg] {domain} req err: {e}");
+                    }
+                    last_err = Some(e);
+                }
+            }
+            // Secondary transport: system curl with the same cookies.
+            // Some upstreams treat client TLS stacks differently, so a
+            // second stack often succeeds where the first is throttled.
+            // Reaching this point means the primary produced nothing.
+            // Cap at two curl attempts across all mirrors.
+            if fallbacks < 2 {
+                fallbacks += 1;
+                if dbg {
+                    eprintln!("[dbg] {domain} curl fallback");
+                }
+                match util::curl_get(&url, bootstrap.as_deref(), 20) {
+                    Ok((_, body)) => {
+                        let text = String::from_utf8_lossy(&body);
+                        if dbg {
+                            eprintln!("[dbg] {domain} curl len={}", text.len());
+                        }
+                        let results = parse_annas(&text, self.name(), domain);
+                        if !results.is_empty() {
+                            return Ok(results);
+                        }
+                    }
+                    Err(e) => {
+                        if dbg {
+                            eprintln!("[dbg] {domain} curl err: {e}");
+                        }
+                    }
+                }
             }
         }
-        Err(last_err.unwrap_or_else(|| Error::internal("annas_archive", "all mirrors failed")))
+        Err(last_err.unwrap_or_else(|| Error::unavailable(self.name(), 503)))
     }
 }
 
@@ -68,7 +142,7 @@ pub fn parse_annas(html: &str, engine: &str, domain: &str) -> Vec<RawResult> {
     for node in doc.select(&sel) {
         let title = parse::select_first_nonempty(&node, "a[class*='text-lg']");
         let href = parse::attr(&node, "a[class*='text-lg']", "href").unwrap_or_default();
-        if let (Some(title), _) = (title, href.clone()) {
+        if let Some(title) = title {
             if href.is_empty() {
                 continue;
             }

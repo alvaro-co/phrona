@@ -3,11 +3,9 @@
 use async_trait::async_trait;
 
 use crate::engine::{Engine, EngineContext};
-use crate::engines::startpage::fetch_sc;
-use crate::engines::util;
+use crate::engines::startpage::{build_form, fetch_sc, post_search};
 use crate::error::Result;
-use crate::models::{Category, RawResult, SafeSearch};
-use crate::parse;
+use crate::models::{Category, RawResult};
 
 /// Startpage images.
 pub struct StartpageImages;
@@ -25,46 +23,8 @@ impl Engine for StartpageImages {
     async fn search(&self, ctx: &EngineContext<'_>) -> Result<Vec<RawResult>> {
         let opts = ctx.opts;
         let sc = fetch_sc(ctx).await?;
-        let (lang, country) = opts.lang_country();
-        let qadf = match opts.safesearch {
-            SafeSearch::Strict => "heavy",
-            SafeSearch::Moderate => "moderate",
-            SafeSearch::Off => "none",
-        };
-        let mut form: Vec<(&str, String)> = vec![
-            ("query", opts.query.clone()),
-            ("cat", "images".into()),
-            ("t", "device".into()),
-            ("sc", sc),
-            ("language", lang.clone()),
-            ("lui", lang.clone()),
-            ("abp", "1".into()),
-            ("abd", "0".into()),
-            ("abe", "0".into()),
-            ("qsr", format!("{lang}_{}", country.to_uppercase())),
-            ("qadf", qadf.into()),
-            ("segment", "startpage.udog".into()),
-        ];
-        if opts.page > 1 {
-            form.push(("page", opts.page.to_string()));
-        }
-        let body = parse::form_encode(form);
-        let mut headers = wreq::header::HeaderMap::new();
-        headers.insert(
-            wreq::header::REFERER,
-            wreq::header::HeaderValue::from_static("https://www.startpage.com/"),
-        );
-        headers.insert(
-            wreq::header::ORIGIN,
-            wreq::header::HeaderValue::from_static("https://www.startpage.com"),
-        );
-        let resp = ctx
-            .client
-            .post_form_with_headers("https://www.startpage.com/sp/search", &body, &headers)
-            .await?;
-        util::check_response(self.name(), &resp, util::MediaType::Html)?;
-        let body = util::read_body(resp, self.name()).await?;
-        let text = String::from_utf8_lossy(&body);
+        let form = build_form(opts, "images", sc);
+        let text = post_search(ctx, self.name(), &form).await?;
         Ok(parse_startpage_images(&text, self.name()))
     }
 }

@@ -57,9 +57,27 @@ async fn get(client: &HttpClient, url: String) -> Capture {
     bytes_capture(client.get(&url).await.expect("request")).await
 }
 
-async fn post_form(client: &HttpClient, url: String, form: Vec<(String, String)>) -> Capture {
+/// POST to Startpage's SERP, solving an Anubis interstitial when one is
+/// served (mirrors the engine's flow so fixtures capture the real results
+/// page, not the challenge).
+async fn post_search_anubis(client: &HttpClient, form: Vec<(String, String)>) -> Capture {
+    const ORIGIN: &str = "https://www.startpage.com";
+    const URL: &str = "https://www.startpage.com/sp/search";
+    use phrona::engines::anubis::Challenge;
+
     let body = parse::form_encode(form);
-    let resp = client.post_form(&url, &body).await.expect("request");
+    let resp = client.post_form(URL, &body).await.expect("request");
+    let cap = bytes_capture(resp).await;
+    if !Challenge::present_in(&cap.body) {
+        return cap;
+    }
+    let Some(challenge) = Challenge::extract(&cap.body) else {
+        return cap;
+    };
+    if challenge.redeem(client, ORIGIN, URL).await.is_err() {
+        return cap;
+    }
+    let resp = client.post_form(URL, &body).await.expect("request");
     bytes_capture(resp).await
 }
 
@@ -204,15 +222,21 @@ async fn run(client: &HttpClient, ctx: &EngineContext<'_>, query: &str) {
         .unwrap_or_default();
     jobs.push((
         "startpage_web.html",
-        Box::pin(post_form(
+        Box::pin(post_search_anubis(
             client,
-            "https://www.startpage.com/sp/search".to_string(),
             vec![
                 ("query".into(), query.into()),
+                ("cat".into(), "web".into()),
                 ("t".into(), "device".into()),
                 ("sc".into(), sc.clone()),
-                ("qsr".into(), "en_US".into()),
                 ("language".into(), "english".into()),
+                ("lui".into(), "english".into()),
+                ("abp".into(), "1".into()),
+                ("abd".into(), "0".into()),
+                ("abe".into(), "0".into()),
+                ("qsr".into(), "en_US".into()),
+                ("qadf".into(), "moderate".into()),
+                ("segment".into(), "organic".into()),
             ],
         )),
     ));
@@ -339,7 +363,7 @@ async fn run(client: &HttpClient, ctx: &EngineContext<'_>, query: &str) {
                 [
                     ("q", query),
                     ("InfiniteScroll", "1"),
-                    ("first", "11"),
+                    ("first", "1"),
                     ("SFX", "1"),
                     ("cc", "US"),
                     ("setlang", "en"),
@@ -395,18 +419,34 @@ async fn run(client: &HttpClient, ctx: &EngineContext<'_>, query: &str) {
     ));
     jobs.push((
         "google_images.json",
-        Box::pin(get(
-            client,
-            parse::with_query(
+        Box::pin(async {
+            // fresh client: the earlier google_web capture leaves Google
+            // cookies (NID/SOCS) in the shared jar that change which SERP
+            // variant /search serves
+            let fresh = HttpClient::builder()
+                .profile(Profile::Chrome)
+                .build()
+                .unwrap();
+            let mut headers = wreq::header::HeaderMap::new();
+            headers.insert(
+                wreq::header::COOKIE,
+                wreq::header::HeaderValue::from_static(
+                    "CONSENT=YES+cb.20250101-07-p0.en+FX+419; SOCS=CAI",
+                ),
+            );
+            let url = parse::with_query(
                 "https://www.google.com/search",
                 [
-                    ("tbm", "isch"),
                     ("q", query),
-                    ("num", "20"),
+                    ("tbm", "isch"),
+                    ("hl", "en"),
+                    ("asearch", "isch"),
                     ("async", "_fmt:json,p:1,ijn:0"),
+                    ("safe", "moderate"),
                 ],
-            ),
-        )),
+            );
+            bytes_capture(fresh.get_with_headers(&url, &headers).await.unwrap()).await
+        }),
     ));
     jobs.push((
         "mojeek_images.html",
@@ -420,15 +460,20 @@ async fn run(client: &HttpClient, ctx: &EngineContext<'_>, query: &str) {
     ));
     jobs.push((
         "startpage_images.html",
-        Box::pin(post_form(
+        Box::pin(post_search_anubis(
             client,
-            "https://www.startpage.com/sp/search".to_string(),
             vec![
                 ("query".into(), query.into()),
                 ("cat".into(), "images".into()),
                 ("t".into(), "device".into()),
                 ("sc".into(), sc.clone()),
+                ("language".into(), "english".into()),
+                ("lui".into(), "english".into()),
+                ("abp".into(), "1".into()),
+                ("abd".into(), "0".into()),
+                ("abe".into(), "0".into()),
                 ("qsr".into(), "en_US".into()),
+                ("qadf".into(), "moderate".into()),
                 ("segment".into(), "startpage.udog".into()),
             ],
         )),
@@ -460,6 +505,15 @@ async fn run(client: &HttpClient, ctx: &EngineContext<'_>, query: &str) {
         if cap.body.len() > 200 && parsed {
             std::fs::write(&path, &cap.body).unwrap();
             println!("ok    {name} ({} bytes)", cap.body.len());
+            meta.insert(
+                name.to_string(),
+                serde_json::json!({
+                    "bytes": cap.body.len(),
+                    "status": cap.status,
+                    "content_type": cap.content_type,
+                    "parsed": true,
+                }),
+            );
         } else {
             println!(
                 "block {name} ({} bytes, status {}, ct {:?}) - kept existing fixture",
@@ -467,19 +521,32 @@ async fn run(client: &HttpClient, ctx: &EngineContext<'_>, query: &str) {
                 cap.status,
                 cap.content_type
             );
+            // The existing fixture stays. Re-validate it so its recorded
+            // verdict reflects the fixture actually on disk - never a
+            // transient block from this capture attempt.
             if !path.exists() {
                 failures += 1;
             }
+            let m = meta.clone();
+            let verdict = std::fs::read_to_string(&path).ok().and_then(|old| {
+                let parsed = fixture_parses(name, &old);
+                parsed.then(|| {
+                    serde_json::json!({
+                        "bytes": old.len(),
+                        "status": m.get(name)
+                            .and_then(|e| e.get("status").cloned())
+                            .unwrap_or(serde_json::json!(cap.status)),
+                        "content_type": m.get(name)
+                            .and_then(|e| e.get("content_type").cloned())
+                            .unwrap_or(serde_json::json!(cap.content_type)),
+                        "parsed": true,
+                    })
+                })
+            });
+            if let Some(v) = verdict {
+                meta.insert(name.to_string(), v);
+            }
         }
-        meta.insert(
-            name.to_string(),
-            serde_json::json!({
-                "bytes": cap.body.len(),
-                "status": cap.status,
-                "content_type": cap.content_type,
-                "parsed": parsed,
-            }),
-        );
     }
     std::fs::write(META, serde_json::to_string_pretty(&meta).unwrap() + "\n").unwrap();
     if failures > 0 {
@@ -531,6 +598,10 @@ fn fixture_parses(name: &str, body: &str) -> bool {
             "annas_archive",
             "annas-archive.gd",
         )),
+        // not an HTML SERP, but its own text-scanning parser must run here:
+        // the body carries a `)]}'` XSSI prefix, so the generic
+        // whole-body-JSON check below would always reject it
+        "google_images.json" => Some(google_images::parse_google_images(body, "google_images")),
         _ => None,
     };
     if let Some(results) = parsed_html {

@@ -3,3 +3,7 @@ dist/
 build/
 *.egg-info/
 .venv/
+
+# local session cache (operator machine only)
+phrona.cookies.json
+*.so

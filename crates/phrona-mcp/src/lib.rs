@@ -26,7 +26,7 @@ struct SearchParams {
     )]
     #[serde(default)]
     engines: Option<String>,
-    #[schemars(description = "Maximum number of results (default 10)")]
+    #[schemars(description = "Maximum number of results (default 20)")]
     #[serde(default)]
     max_results: Option<usize>,
     #[schemars(description = "Region code, e.g. us-en (default from client)")]
@@ -274,7 +274,18 @@ impl PhronaMcp {
     )]
     fn list_engines(&self, Parameters(p): Parameters<EnginesParams>) -> String {
         let cats: Vec<Category> = match p.category.as_deref() {
-            Some(c) => c.parse::<Category>().map(|c| vec![c]).unwrap_or_default(),
+            // invalid categories are a loud error (matching the REST API),
+            // not an empty result that looks like success
+            Some(c) => match c.parse::<Category>() {
+                Ok(c) => vec![c],
+                Err(_) => {
+                    return envelope(serde_json::json!({
+                        "error": format!(
+                            "invalid category '{c}', expected one of: web, images, news, videos, books"
+                        )
+                    }));
+                }
+            },
             None => Category::ALL.to_vec(),
         };
         let mut out = serde_json::Map::new();
@@ -324,7 +335,7 @@ impl PhronaMcp {
                             "title": title,
                             "url": url,
                             "content": content,
-                            "score": (1.0 - i as f64 * 0.05).max(0.05),
+                            "score": phrona::rank::positional_score(i),
                         }))
                     })
                     .collect();

@@ -109,7 +109,7 @@ fn apply_domains(query: &mut String, include: &[String], exclude: &[String]) {
 }
 
 fn to_tavily_result(r: &ResultItem, pos: usize) -> (String, String, String, f64) {
-    let score = (1.0 - pos as f64 * 0.05).max(0.05);
+    let score = phrona::rank::positional_score(pos);
     match r {
         ResultItem::Web(w) => (w.title.clone(), w.url.clone(), w.description.clone(), score),
         ResultItem::News(n) => (n.title.clone(), n.url.clone(), n.description.clone(), score),

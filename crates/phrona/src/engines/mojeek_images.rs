@@ -23,7 +23,6 @@ impl Engine for MojeekImages {
 
     async fn search(&self, ctx: &EngineContext<'_>) -> Result<Vec<RawResult>> {
         let opts = ctx.opts;
-        let (lang, country) = opts.lang_country();
         let mut params: Vec<(&str, String)> =
             vec![("q", opts.query.clone()), ("fmt", "images".into())];
         if opts.safesearch != SafeSearch::Off {
@@ -33,15 +32,19 @@ impl Engine for MojeekImages {
             params.push(("s", ((opts.page as usize - 1) * 10 + 1).to_string()));
         }
         let url = parse::with_query("https://www.mojeek.com/search", params);
-        let mut headers = wreq::header::HeaderMap::new();
-        headers.insert(
-            wreq::header::COOKIE,
-            wreq::header::HeaderValue::from_str(&format!("lb={lang}; arc={country}")).unwrap(),
-        );
-        let resp = ctx.client.get_with_headers(&url, &headers).await?;
+        // no manual Cookie header: it would drop the ALTCHA clearance
+        // cookie from the jar (see mojeek.rs)
+        let resp = ctx.client.get(&url).await?;
         util::check_response(self.name(), &resp, util::MediaType::Html)?;
         let body = util::read_body(resp, self.name()).await?;
-        let text = String::from_utf8_lossy(&body);
+        let mut text = String::from_utf8_lossy(&body).into_owned();
+        if crate::engines::mojeek::is_challenge_page(&text) {
+            crate::engines::mojeek::solve_challenge(ctx).await?;
+            let resp = ctx.client.get(&url).await?;
+            util::check_response(self.name(), &resp, util::MediaType::Html)?;
+            let body = util::read_body(resp, self.name()).await?;
+            text = String::from_utf8_lossy(&body).into_owned();
+        }
         Ok(parse_mojeek_images(&text, self.name()))
     }
 }

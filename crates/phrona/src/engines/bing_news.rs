@@ -4,7 +4,7 @@ use async_trait::async_trait;
 
 use crate::engine::{Engine, EngineContext};
 use crate::engines::util;
-use crate::engines::util::bing_time_minutes;
+use crate::engines::util::{bing_time_minutes, normalize_date};
 use crate::error::Result;
 use crate::models::{Category, RawResult};
 use crate::parse;
@@ -28,7 +28,7 @@ impl Engine for BingNews {
         let mut params: Vec<(&str, String)> = vec![
             ("q", opts.query.clone()),
             ("InfiniteScroll", "1".into()),
-            ("first", (opts.page as usize * 10 + 1).to_string()),
+            ("first", ((opts.page as usize - 1) * 10 + 1).to_string()),
             ("SFX", opts.page.to_string()),
             ("cc", country.clone()),
             ("setlang", lang.clone()),
@@ -89,54 +89,10 @@ pub fn parse_bing_news(html: &str, engine: &str) -> Vec<RawResult> {
     out
 }
 
-/// Parse absolute ("%d.%m.%Y", "%m/%d/%Y") and relative ("N days ago",
-/// multi-language) date strings into ISO-8601.
-pub fn normalize_date(raw: &str) -> Option<String> {
-    let s = raw.trim();
-    if s.is_empty() {
-        return None;
-    }
-    let now = chrono::Utc::now();
-    if let Ok(d) = chrono::NaiveDate::parse_from_str(s, "%d.%m.%Y") {
-        return d.and_hms_opt(0, 0, 0).map(|t| t.to_string() + "Z");
-    }
-    if let Ok(d) = chrono::NaiveDate::parse_from_str(s, "%m/%d/%Y") {
-        return d.and_hms_opt(0, 0, 0).map(|t| t.to_string() + "Z");
-    }
-    // relative: "3 days ago", "2 Stunden", "1 jour", "5 giorni", "2 dias"
-    let words = s.to_lowercase();
-    let unit: &[(&str, &[&str])] = &[
-        ("minute", &["minute", "min", "min."]),
-        ("hour", &["hour", "hours", "hora", "stunde"]),
-        ("day", &["day", "days", "dia", "dias", "día"]),
-        ("week", &["week", "weeks", "semana", "woche"]),
-        ("month", &["month", "months", "mes", "monat"]),
-        ("year", &["year", "years", "año", "jahr"]),
-    ];
-    let num = s
-        .chars()
-        .take_while(|c| c.is_ascii_digit())
-        .collect::<String>()
-        .parse::<i64>()
-        .ok()?;
-    let unit_name = unit
-        .iter()
-        .find_map(|(name, ws)| ws.iter().any(|w| words.contains(w)).then_some(*name))?;
-    let (dur, _) = match unit_name {
-        "minute" => (chrono::Duration::minutes(num), num),
-        "hour" => (chrono::Duration::hours(num), num),
-        "day" => (chrono::Duration::days(num), num),
-        "week" => (chrono::Duration::weeks(num), num),
-        "month" => (chrono::Duration::days(num * 30), num),
-        _ => (chrono::Duration::days(num * 365), num),
-    };
-    let d = now - dur;
-    Some(d.to_rfc3339())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engines::util::normalize_date;
 
     #[test]
     fn parse_fixture() {

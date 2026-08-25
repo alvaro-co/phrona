@@ -139,8 +139,9 @@ on reload - no rebuild.
   category, safesearch, region, language, time range, filters, page,
   JSON view, per-engine report) and a Tools tab that runs every CLI
   capability in the browser (suggest, extract, ground, engines, test).
-- Fixture-based parser tests: 26 captured live pages (see
-  `crates/phrona/tests/fixtures/`), network-independent.
+- Fixture-based parser tests: 22 of 26 captured pages are
+  verified-parseable live captures (see `crates/phrona/tests/fixtures/`);
+  the suite is fully network-independent.
 - Upstream drift monitor: `scripts/watch_upstream.sh` + the
   `upstream-watch` GitHub workflow report when any of the 8 upstream
   projects moves past its pinned commit, so broken parsers are caught
@@ -186,10 +187,30 @@ cargo run -p phrona --bin dbg_parse -- bing            # parse a fixture
 cargo run -p phrona-examples --bin basic -- "rust"     # run the examples
 ```
 
-Known limitation: Google, Qwant, Mojeek and the DDG HTML endpoint
-anti-bot-block this network (429 / CAPTCHA / 403), so their parsers are
-tested only for graceful behavior and their engines may need proxies or a
-cleaner IP. See [docs/engines.md](docs/engines.md).
+A few engines only return full results after a real-browser visit.
+Phrona keeps this strictly opt-in and self-contained:
+
+```yaml
+engines:
+  auto_bootstrap: true   # default: false - never launched unless you ask
+```
+
+With that enabled, when one of those engines is blocked phrona briefly
+runs your installed Chromium-family browser headless (or downloads the
+official `chrome-headless-shell` into `~/.cache/phrona/browser/` once -
+no packages, no privileges), stores the resulting session in
+`phrona.cookies.json` next to your config and retries. Sessions are
+reused across restarts; nothing interactive ever happens.
+
+Prefer to stay fully static? Pin cookies yourself in
+`phrona.yaml` (`engines.bootstrap_cookies`), pass them ad hoc via
+`--cookie engine=...`, or run `phrona bootstrap [engines]` manually -
+qwant in particular is pure HTTP and only needs such a cookie.
+Startpage (Anubis), Mojeek (ALTCHA) and the DuckDuckGo verticals have
+their anti-bot flows solved fully natively. When an upstream changes its
+flow, the companion [webrief](https://github.com/alvaro-co/webrief) tool
+captures it for reverse engineering. See
+[docs/engines.md](docs/engines.md) for the per-engine status table.
 
 ## License
 

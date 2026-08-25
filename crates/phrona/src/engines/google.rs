@@ -4,15 +4,36 @@ use async_trait::async_trait;
 
 use crate::engine::{Engine, EngineContext};
 use crate::engines::util;
-use crate::error::Result;
+use crate::error::{BlockDetails, Error, Result};
 use crate::models::{Category, RawResult, SafeSearch};
 use crate::parse;
 
 /// Google web search (HTML endpoint).
 pub struct Google;
 
-/// Google `safe` parameter values (off | moderate | active).
-const SAFE: [&str; 3] = ["off", "moderate", "active"];
+/// Full consent cookie value; bypasses the consent.google.com wall.
+pub(crate) const GOOGLE_CONSENT_COOKIE: &str = "CONSENT=YES+cb.20250101-07-p0.en+FX+419; SOCS=CAI";
+
+/// Merge the engine's fixed cookies with operator-supplied bootstrap
+/// session cookies (`engines.bootstrap_cookies`), when present.
+pub(crate) fn merged_cookie(ctx: &EngineContext<'_>, engine: &str, fixed: &str) -> Option<String> {
+    match ctx.shared.bootstrap_for(engine) {
+        Some(b) => Some(format!("{fixed}; {b}")),
+        None => Some(fixed.to_string()),
+    }
+}
+
+/// Google `safe` parameter values, indexed by [`SafeSearch`]
+/// (off | moderate | active). Shared with `google_images`.
+pub(crate) const SAFE: [&str; 3] = ["off", "moderate", "active"];
+
+pub(crate) fn safe_param(safesearch: SafeSearch) -> &'static str {
+    match safesearch {
+        SafeSearch::Off => SAFE[0],
+        SafeSearch::Moderate => SAFE[1],
+        SafeSearch::Strict => SAFE[2],
+    }
+}
 
 impl Google {
     fn base_params(opts: &crate::options::SearchOptions) -> Vec<(&'static str, String)> {
@@ -25,12 +46,7 @@ impl Google {
             ("ie", "utf8".into()),
             ("oe", "utf8".into()),
         ];
-        let safe = match opts.safesearch {
-            SafeSearch::Off => SAFE[0],
-            SafeSearch::Moderate => SAFE[1],
-            SafeSearch::Strict => SAFE[2],
-        };
-        p.push(("safe", safe.into()));
+        p.push(("safe", safe_param(opts.safesearch).into()));
         let (lang, country) = opts.lang_country();
         p.push(("hl", lang.clone()));
         p.push(("lr", format!("lang_{lang}")));
@@ -61,23 +77,46 @@ impl Engine for Google {
 
     async fn search(&self, ctx: &EngineContext<'_>) -> Result<Vec<RawResult>> {
         let url = Self::search_url(ctx.opts);
+        let cookie = merged_cookie(ctx, self.name(), GOOGLE_CONSENT_COOKIE);
         let headers = {
             let mut h = wreq::header::HeaderMap::new();
-            // Full consent cookie value bypasses the consent.google.com wall.
-            h.insert(
-                wreq::header::COOKIE,
-                wreq::header::HeaderValue::from_static(
-                    "CONSENT=YES+cb.20250101-07-p0.en+FX+419; SOCS=CAI",
-                ),
-            );
+            if let Some(c) = cookie {
+                if let Ok(v) = wreq::header::HeaderValue::from_str(&c) {
+                    h.insert(wreq::header::COOKIE, v);
+                }
+            }
             h
         };
         let resp = ctx.client.get_with_headers(&url, &headers).await?;
         util::check_response(self.name(), &resp, util::MediaType::Html)?;
         let body = util::read_body(resp, self.name()).await?;
         let text = String::from_utf8_lossy(&body);
-        Ok(parse_google(&text, self.name()))
+        let results = parse_google(&text, self.name());
+        if results.is_empty() && looks_blocked(&text) {
+            return Err(Error::blocked(self.name(), BlockDetails::Captcha));
+        }
+        Ok(results)
     }
+}
+
+/// Known Google block page that arrives with HTTP 200 text/html: the
+/// "detected unusual traffic" CAPTCHA interstitial. Only two ultra-specific
+/// phrases - normal SERPs legitimately embed other relay-page fragments
+/// (`/sorry/index`, `enablejs`) as preload handlers, which caused false
+/// blocks on healthy responses. Consulted only when parsing produced zero
+/// results, so an honest empty SERP stays possible.
+fn looks_blocked(text: &str) -> bool {
+    if text.contains("detected unusual traffic")
+        || text.contains("unusual traffic from your computer")
+    {
+        return true;
+    }
+    // The JS-relay interstitial ("click here if you are not redirected")
+    // carries no result markup at all; healthy SERPs embed the same
+    // fragments as preload handlers but always contain result nodes.
+    let relay = text.contains("/httpservice/retry/enablejs")
+        || text.contains("not redirected within a few seconds");
+    relay && !text.contains("<h3")
 }
 
 /// Parse organic results (modern `[jscontroller=SC7lYd]` layout, falling back
@@ -189,6 +228,27 @@ fn parse_featured_snippet(doc: &scraper::Html) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn looks_blocked_ignores_relay_fragments_in_healthy_serps() {
+        // regression: healthy SERPs legitimately embed relay-page
+        // fragments ("/sorry/index", "enablejs") as preload handlers -
+        // they must not be classified as blocks
+        let healthy = r#"<html><title>rust - Google Search</title>
+            <div jscontroller="SC7lYd"><h3>Rust</h3></div>
+            <script>if(location.href.includes("/sorry/index"))retry();
+            fetch("/httpservice/retry/enablejs?sei=x");</script></html>"#;
+        assert!(!looks_blocked(healthy));
+        let blocked = r#"<html><title>Google Search</title>
+            Our systems have detected unusual traffic from your computer
+            network.</html>"#;
+        assert!(looks_blocked(blocked));
+        let relay = r#"<html><title>Google Search</title>
+            Please click here if you are not redirected within a few seconds.
+            <a href="/httpservice/retry/enablejs?sei=x">click here</a></html>"#;
+        assert!(looks_blocked(relay), "relay must classify as blocked");
+        assert!(!looks_blocked("<html><title>empty</title></html>"));
+    }
 
     #[test]
     fn parse_fixture() {

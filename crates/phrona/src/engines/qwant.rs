@@ -58,6 +58,19 @@ impl Engine for Qwant {
             wreq::header::ORIGIN,
             wreq::header::HeaderValue::from_static("https://www.qwant.com"),
         );
+        if let Some(c) = ctx.shared.bootstrap_for(self.name()) {
+            if let Ok(v) = wreq::header::HeaderValue::from_str(&c) {
+                headers.insert(wreq::header::COOKIE, v);
+            }
+        }
+        // operator-provided session cookie (config `bootstrap_cookies`,
+        // `--cookie qwant=...`, or the local harvest cache). Pure HTTP:
+        // this engine never launches a browser on its own.
+        if let Some(c) = ctx.shared.bootstrap_for(self.name()) {
+            if let Ok(v) = wreq::header::HeaderValue::from_str(&c) {
+                headers.insert(wreq::header::COOKIE, v);
+            }
+        }
         let resp = ctx.client.get_with_headers(&url, &headers).await?;
         util::check_response(self.name(), &resp, util::MediaType::Json)?;
         let body = util::read_body(resp, self.name()).await?;

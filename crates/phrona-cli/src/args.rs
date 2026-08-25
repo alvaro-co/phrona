@@ -29,6 +29,11 @@ pub struct Cli {
     /// configured proxy list
     #[arg(long, global = true)]
     pub proxy: Vec<String>,
+    /// Bootstrap session cookies for an engine, as `engine=Cookie-header`
+    /// (e.g. `google="__Secure-ENID=...; SOCS=CAI"`), repeatable; overrides
+    /// `engines.bootstrap_cookies` from the config
+    #[arg(long, global = true)]
+    pub cookie: Vec<String>,
 
     /// Request timeout in seconds (default: search.timeout_secs, else 15)
     #[arg(long, global = true)]
@@ -57,6 +62,10 @@ pub enum Command {
     Serve(ServeArgs),
     /// Serve MCP over stdio only (for MCP clients)
     Mcp,
+    /// Refresh session cookies for cookie-gated engines (google,
+    /// annas_archive, qwant) by driving the system Chromium headless for a
+    /// few seconds. Default: all supported engines.
+    Bootstrap(BootstrapArgs),
     /// Generate shell completion script
     Completions(CompletionsArgs),
 }
@@ -188,6 +197,13 @@ pub struct EnginesArgs {
 }
 
 /// Arguments for `phrona test`: probe engine availability across
+/// Arguments for `phrona bootstrap`.
+#[derive(Args)]
+pub struct BootstrapArgs {
+    /// Engines to refresh (default: all with bootstrap support)
+    pub engines: Vec<String>,
+}
+
 /// categories.
 #[derive(Args)]
 pub struct TestArgs {

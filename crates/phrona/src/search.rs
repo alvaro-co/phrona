@@ -13,7 +13,7 @@ use crate::engine::{EngineContext, EngineShared, resolve};
 use crate::error::{Error, Result};
 use crate::models::{Category, EngineReport, RawResult, ResultItem, SearchResponse, WebResult};
 use crate::options::SearchOptions;
-use crate::rank::{calculate_score, query_terms, rank};
+use crate::rank::rank;
 
 /// Default maximum number of simultaneous outbound engine requests per
 /// search (overridable via [`SearchClient::with_config`] /
@@ -64,6 +64,10 @@ pub struct SearchClient {
     shared: Arc<EngineShared>,
     concurrency: usize,
     observer: Arc<dyn EngineObserver>,
+    /// Whether blocked bootstrap engines may be refreshed by briefly
+    /// launching a headless browser (see `crate::bootstrap`).
+    /// Default: disabled - browser use is opt-in.
+    auto_bootstrap: bool,
 }
 
 impl SearchClient {
@@ -84,12 +88,24 @@ impl SearchClient {
     ) -> Result<Self> {
         let timeout = timeout.unwrap_or_else(|| std::time::Duration::from_secs(10));
         let pool = ProxyPool::new(proxies.unwrap_or_default(), profile, timeout, policy)?;
-        Ok(Self {
+        let client = Self {
             pool,
             shared: Arc::new(EngineShared::new()),
             concurrency: MAX_CONCURRENT_ENGINES,
             observer: Arc::new(NoopEngineObserver),
-        })
+            // opt-in: no browser is ever launched unless explicitly enabled
+            auto_bootstrap: false,
+        };
+        // local cookie cache warm start (phrona.cookies.json next to the
+        // config): restarts reuse harvested sessions instead of re-harvesting
+        for (engine, _, _) in crate::bootstrap::SEEDS {
+            if let Some((jar, _at)) = crate::bootstrap::load_cached(engine) {
+                if !jar.is_empty() {
+                    client.shared.set_bootstrap(engine, jar);
+                }
+            }
+        }
+        Ok(client)
     }
 
     /// Build a client from a [`PhronaConfig`]: impersonation profile,
@@ -102,7 +118,54 @@ impl SearchClient {
             TargetPolicy::from_security(&cfg.security),
         )?;
         client.concurrency = cfg.concurrency_limit().max(1);
+        client.auto_bootstrap = cfg.engines.auto_bootstrap;
+        for (engine, cookies) in &cfg.engines.bootstrap_cookies {
+            client.shared.set_bootstrap(engine, cookies.clone());
+        }
+        // local cookie cache (phrona.cookies.json next to the config):
+        // warm start so restarts don't re-harvest
+        for (engine, _, _) in crate::bootstrap::SEEDS {
+            if cfg.engines.bootstrap_cookies.contains_key(*engine) {
+                continue; // manual pinning wins
+            }
+            if let Some((jar, _at)) = crate::bootstrap::load_cached(engine) {
+                if !jar.is_empty() {
+                    client.shared.set_bootstrap(engine, jar);
+                }
+            }
+        }
         Ok(client)
+    }
+
+    /// Enable/disable silent headless cookie harvesting on blocks.
+    pub fn with_auto_bootstrap(mut self, enabled: bool) -> Self {
+        self.auto_bootstrap = enabled;
+        self
+    }
+
+    /// Per-engine spacing between automatic harvest attempts.
+    fn refresh_spacing_ok(&self, engine: &str) -> bool {
+        match self.shared.bootstrap_at.read().get(engine) {
+            Some(at) => at.elapsed() >= crate::bootstrap::min_refresh_interval(engine),
+            None => true,
+        }
+    }
+
+    /// Register session cookies for an engine on this client in place
+    /// (interior-mutable variant of [`Self::with_bootstrap_cookie`]).
+    pub fn register_bootstrap_cookie(&self, engine: impl Into<String>, cookies: impl Into<String>) {
+        self.shared.set_bootstrap(&engine.into(), cookies);
+    }
+
+    /// Register operator-supplied session cookies for an engine (e.g.
+    /// Google's `__Secure-ENID`). Chainable builder method.
+    pub fn with_bootstrap_cookie(
+        self,
+        engine: impl Into<String>,
+        cookies: impl Into<String>,
+    ) -> Self {
+        self.shared.set_bootstrap(&engine.into(), cookies);
+        self
     }
 
     /// The configured per-search engine concurrency cap.
@@ -232,7 +295,7 @@ impl SearchClient {
                         });
                     }
                 }
-                if raw.len() >= max_results {
+                if !opts.probe_all && raw.len() >= max_results {
                     drop(in_flight);
                     break;
                 }
@@ -255,9 +318,170 @@ impl SearchClient {
             }
         };
 
-        let ((raw, answers, reports, any_ok), suggestions) = tokio::join!(scrape, suggestions);
+        let ((mut raw, mut answers, mut reports, any_ok), suggestions) =
+            tokio::join!(scrape, suggestions);
+
+        // Silent bypass: engines whose anti-bot trusts only real-browser
+        // cookies get one headless harvest + retry when blocked.
+        if self.auto_bootstrap {
+            // NB: reports arrive in COMPLETION order - match by name
+            let by_name: std::collections::HashMap<&str, &'static dyn crate::engine::Engine> =
+                engines.iter().map(|e| (e.name(), *e)).collect();
+            let stale: Vec<&'static dyn crate::engine::Engine> = reports
+                .iter()
+                .filter(|r| {
+                    r.status == "error"
+                        // ErrorKind::Debug renders as "Blocked(...)" /
+                        // "NetworkFailure" - both mean the session cookies
+                        // may be missing/stale for a bootstrap engine
+                        && r.kind.as_deref().is_some_and(|k| {
+                            k.starts_with("Blocked") || k.starts_with("NetworkFailure")
+                        })
+                        && crate::bootstrap::seed_for(&r.name).is_some()
+                        && self.shared.bootstrap_stale(&r.name)
+                        && self.refresh_spacing_ok(&r.name)
+                })
+                .filter_map(|r| by_name.get(r.name.as_str()).copied())
+                .collect();
+            if std::env::var_os("PHRONA_DEBUG_BOOTSTRAP").is_some() && !stale.is_empty() {
+                eprintln!(
+                    "[dbg bootstrap] refreshing {:?}",
+                    stale.iter().map(|e| e.name()).collect::<Vec<_>>()
+                );
+            }
+            if !stale.is_empty() {
+                for engine in &stale {
+                    let name = engine.name();
+                    match tokio::task::spawn_blocking({
+                        move || crate::bootstrap::harvest_blocking(name)
+                    })
+                    .await
+                    {
+                        Ok(Ok(jar)) => {
+                            if std::env::var_os("PHRONA_DEBUG_BOOTSTRAP").is_some() {
+                                eprintln!("[dbg bootstrap] {name}: harvested {} bytes", jar.len());
+                            }
+                            // persist for the next run of a local install
+                            let name2 = name;
+                            let jar2 = jar.clone();
+                            let _ = tokio::task::spawn_blocking(move || {
+                                crate::bootstrap::store_cached(name2, &jar2)
+                            })
+                            .await;
+                            self.shared.set_bootstrap(name, jar);
+                        }
+                        Ok(Err(e)) => {
+                            if std::env::var_os("PHRONA_DEBUG_BOOTSTRAP").is_some() {
+                                eprintln!("[dbg bootstrap] {name}: harvest failed: {e}");
+                            }
+                            continue;
+                        }
+                        Err(_) => continue,
+                    }
+                    self.shared.mark_bootstrap_refreshed(name);
+                }
+
+                // rerun the blocked engines once with fresh cookies
+                let sem2 = Arc::new(Semaphore::new(self.concurrency));
+                let futs = stale.iter().map(|engine| {
+                    let client = self.pool.get_client();
+                    let shared = Arc::clone(&self.shared);
+                    let sem = Arc::clone(&sem2);
+                    let opts = &opts;
+                    async move {
+                        let ctx = EngineContext {
+                            client,
+                            opts,
+                            shared: &shared,
+                        };
+                        let started = Instant::now();
+                        let _permit = sem.acquire().await.expect("semaphore closed");
+                        (engine.name(), engine.search(&ctx).await, started.elapsed())
+                    }
+                });
+                let mut retry = FuturesUnordered::from_iter(futs);
+                while let Some((name, result, elapsed)) = retry.next().await {
+                    let slot = reports.iter_mut().find(|r| r.name == name);
+                    match result {
+                        Ok(items) if items.is_empty() => {
+                            if let Some(r) = slot {
+                                *r = EngineReport {
+                                    name: name.to_string(),
+                                    status: "empty".into(),
+                                    results: 0,
+                                    error: None,
+                                    scope: None,
+                                    kind: None,
+                                };
+                            }
+                            self.observer
+                                .on_engine_done(name, "empty", None, None, elapsed);
+                        }
+                        Ok(items) => {
+                            let n = items.len();
+                            if let Some(r) = slot {
+                                *r = EngineReport {
+                                    name: name.to_string(),
+                                    status: "ok".into(),
+                                    results: n,
+                                    error: None,
+                                    scope: None,
+                                    kind: None,
+                                };
+                            }
+                            self.observer
+                                .on_engine_done(name, "ok", None, None, elapsed);
+                            let (a_part, r_part): (Vec<_>, Vec<_>) =
+                                items.into_iter().partition(|x| x.url.is_empty());
+                            answers.extend(a_part);
+                            raw.extend(r_part);
+                        }
+                        Err(e) => {
+                            if std::env::var_os("PHRONA_DEBUG_BOOTSTRAP").is_some() {
+                                eprintln!("[dbg bootstrap] {name} retry failed: {e}");
+                            }
+                            let scope_s = format!("{:?}", e.scope());
+                            let kind_s = format!("{:?}", e.kind());
+                            if let Some(r) = slot {
+                                *r = EngineReport {
+                                    name: name.to_string(),
+                                    status: "error".into(),
+                                    results: 0,
+                                    error: Some(e.to_string()),
+                                    scope: Some(scope_s.clone()),
+                                    kind: Some(kind_s.clone()),
+                                };
+                            }
+                            self.observer.on_engine_done(
+                                name,
+                                "error",
+                                Some(&scope_s),
+                                Some(&kind_s),
+                                elapsed,
+                            );
+                        }
+                    }
+                }
+            }
+        }
 
         if !any_ok {
+            // Availability probing wants the full per-engine report even for
+            // a category where every engine failed; normal searches surface
+            // the failure as an error instead.
+            if opts.probe_all {
+                return Ok(SearchResponse {
+                    query: opts.query.clone(),
+                    category,
+                    page: opts.page,
+                    total: 0,
+                    results: Vec::new(),
+                    suggestions,
+                    answer: None,
+                    engines: reports,
+                    elapsed_ms: started.elapsed().as_millis() as u64,
+                });
+            }
             let details = reports
                 .iter()
                 .filter_map(|r| r.error.as_ref().map(|e| format!("{}: {}", r.name, e)))
@@ -272,11 +496,11 @@ impl SearchClient {
 
         let groups = group(raw);
         let ranked = rank(groups, &opts.query);
-        let terms = query_terms(&opts.query);
         let mut results: Vec<ResultItem> = Vec::new();
-        for (_, g) in ranked.into_iter() {
-            // unified cross-category score, normalized to (0.001, 1.000)
-            let score = calculate_score(&g, &terms);
+        for (raw_score, g) in ranked.into_iter() {
+            // unified cross-category score, normalized to (0.001, 1.000),
+            // derived from the raw score `rank` already computed
+            let score = crate::rank::normalize_score(raw_score);
             let item = to_result_item(g, score, results.len());
             if let Some(item) = item {
                 results.push(item);

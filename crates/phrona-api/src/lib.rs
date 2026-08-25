@@ -388,7 +388,6 @@ where
     }
 }
 
-/// In-memory fixed-window rate limiter middleware: honors
 /// Resolve the client IP for rate limiting. The peer address is used
 /// directly unless it belongs to `trusted_proxies` (an operator-configured
 /// list of reverse proxies), in which case the leftmost `X-Forwarded-For`
