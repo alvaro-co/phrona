@@ -1,3 +1,16 @@
+## (2026-08-25) v0.2.0 review pass
+
+- Dependency PRs resolved: base64 0.23, rmcp 3.1.4, wreq rc.31 (live-
+  verified against real engines), rand 0.10 with the `RngExt` migration.
+- Harvester correctness: session jar is re-read after the settle phase;
+  a visit that never produces the marker cookie now fails instead of
+  caching an unusable half-session; restarts honour per-engine refresh
+  spacing via cached session ages; config pins always win over cache.
+- Opt-in surface: `--auto-bootstrap` flag, `PHRONA_AUTO_BOOTSTRAP` env
+  (library + CLI), config key - default off everywhere.
+- Housekeeping: unused sha1 dependency dropped, debug scaffolding
+  removed, zero warnings/clippy, 183 tests green.
+
 # HISTORY
 
 A log of how Phrona was built, commit by commit.

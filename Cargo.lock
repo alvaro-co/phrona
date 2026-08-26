@@ -1515,7 +1515,7 @@ dependencies = [
 
 [[package]]
 name = "phrona"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "async-trait",
  "base64",
@@ -1540,7 +1540,7 @@ dependencies = [
 
 [[package]]
 name = "phrona-api"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -1560,7 +1560,7 @@ dependencies = [
 
 [[package]]
 name = "phrona-cli"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1578,7 +1578,7 @@ dependencies = [
 
 [[package]]
 name = "phrona-examples"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "phrona",
@@ -1587,7 +1587,7 @@ dependencies = [
 
 [[package]]
 name = "phrona-mcp"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "phrona",
@@ -1602,7 +1602,7 @@ dependencies = [
 
 [[package]]
 name = "phrona-python"
-version = "0.1.1"
+version = "0.2.0"
 dependencies = [
  "phrona",
  "pyo3",
