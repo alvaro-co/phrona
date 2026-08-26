@@ -227,9 +227,13 @@ fn downloaded_shell() -> Result<PathBuf> {
             .map_err(|_| Error::internal("bootstrap", "zip extract"))?;
     }
     let _ = std::fs::remove_file(&zip_path);
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755))
-        .map_err(|_| Error::internal("bootstrap", "chmod"))?;
+    // executable bit (unix only; windows derives it from the extension)
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755))
+            .map_err(|_| Error::internal("bootstrap", "chmod"))?;
+    }
     trace("download-complete");
     Ok(bin)
 }
