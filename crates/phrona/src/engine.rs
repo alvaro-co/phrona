@@ -75,6 +75,19 @@ impl EngineShared {
             .insert(engine.to_string(), Instant::now());
     }
 
+    /// Seed the refresh clock for `engine` from the age (seconds) of a
+    /// cached session, so restarts honour the spacing window instead of
+    /// re-harvesting immediately after every process start.
+    pub(crate) fn seed_bootstrap_age(&self, engine: &str, age_secs: u64) {
+        let at = Instant::now()
+            .checked_sub(Duration::from_secs(age_secs.min(86_400)))
+            .unwrap_or_else(Instant::now);
+        self.bootstrap_at
+            .write()
+            .entry(engine.to_string())
+            .or_insert(at);
+    }
+
     /// Whether enough time has passed since the last auto-harvest of
     /// `engine` (`MIN_REHARVEST_INTERVAL`), or none happened yet.
     pub fn bootstrap_stale(&self, engine: &str) -> bool {

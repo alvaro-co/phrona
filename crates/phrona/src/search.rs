@@ -112,15 +112,7 @@ impl SearchClient {
             // enabled via builder, config, or environment
             auto_bootstrap: env_auto_bootstrap().unwrap_or(false),
         };
-        // local cookie cache warm start (phrona.cookies.json next to the
-        // config): restarts reuse harvested sessions instead of re-harvesting
-        for (engine, _, _) in crate::bootstrap::SEEDS {
-            if let Some((jar, _at)) = crate::bootstrap::load_cached(engine) {
-                if !jar.is_empty() {
-                    client.shared.set_bootstrap(engine, jar);
-                }
-            }
-        }
+        Self::warm_start(&client);
         Ok(client)
     }
 
@@ -138,19 +130,36 @@ impl SearchClient {
         for (engine, cookies) in &cfg.engines.bootstrap_cookies {
             client.shared.set_bootstrap(engine, cookies.clone());
         }
-        // local cookie cache (phrona.cookies.json next to the config):
-        // warm start so restarts don't re-harvest
+        // manual pins win over the local cache
+        for engine in cfg.engines.bootstrap_cookies.keys() {
+            client.shared.bootstrap_at.write().remove(engine);
+        }
+        Self::warm_start(&client);
+        Ok(client)
+    }
+
+    /// Load sessions from the local cache (`phrona.cookies.json` next to
+    /// the config) and seed per-engine refresh clocks from their ages, so
+    /// restarts reuse recent sessions without any browsing.
+    fn warm_start(client: &SearchClient) {
         for (engine, _, _) in crate::bootstrap::SEEDS {
-            if cfg.engines.bootstrap_cookies.contains_key(*engine) {
-                continue; // manual pinning wins
-            }
-            if let Some((jar, _at)) = crate::bootstrap::load_cached(engine) {
-                if !jar.is_empty() {
-                    client.shared.set_bootstrap(engine, jar);
+            if let Some((jar, at)) = crate::bootstrap::load_cached(engine) {
+                if jar.is_empty() {
+                    continue;
                 }
+                if client.shared.bootstrap_for(engine).is_some() {
+                    continue; // an explicit pin already provides this engine
+                }
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(at);
+                client.shared.set_bootstrap(engine, jar);
+                client
+                    .shared
+                    .seed_bootstrap_age(engine, now.saturating_sub(at));
             }
         }
-        Ok(client)
     }
 
     /// Enable/disable automatic session refresh via a brief headless

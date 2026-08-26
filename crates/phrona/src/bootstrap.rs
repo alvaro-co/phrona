@@ -1,15 +1,14 @@
-//! Headless session-cookie bootstrap for engines whose anti-bot grants
-//! trust only to real browser sessions (google `__Secure-ENID`, qwant
-//! `datadome`, anna's archive ddos-guard clearance).
+//! Session bootstrap for engines that only return full results after a
+//! real-browser visit (google, anna's archive; qwant accepts an
+//! operator-provided cookie and never triggers this itself).
 //!
-//! The only 100%-necessary browser use in the project, kept as small as
-//! possible: spawn the system Chromium-family binary headless with a
-//! remote-debugging port, drive it over a minimal CDP WebSocket client
-//! (no external automation stack), visit one seed URL per engine, read the
-//! jar via `Network.getCookies` and shut down. A few seconds per engine.
+//! Kept deliberately small: spawn a Chromium-family binary headless with
+//! a remote-debugging port, drive it over a minimal CDP WebSocket client
+//! (no external automation stack), visit one seed URL per engine, read
+//! the jar via `Network.getCookies` and shut down. Seconds per engine,
+//! strictly opt-in (see `SearchClient::with_auto_bootstrap`).
 //!
-//! Triggered silently by the orchestrator when a corresponding engine is
-//! blocked (see `SearchClient`), or manually via `phrona bootstrap`.
+//! Also triggered manually via `phrona bootstrap [engines...]`.
 
 use std::io::{BufReader, Read, Write};
 use std::net::TcpStream;
@@ -21,9 +20,9 @@ use tungstenite::Message;
 
 use crate::error::{Error, Result};
 
-/// Per-engine bootstrap spec: seed page + the clearance cookie whose
-/// appearance signals the upstream session actually completed (the
-/// finishes its WebSocket challenge seconds AFTER load).
+/// Per-engine bootstrap spec: seed page + the session cookie whose
+/// appearance signals the visit actually completed. Note the cookie is
+/// often issued seconds *after* page load, so polling is required.
 pub const SEEDS: &[(&str, &str, &str)] = &[
     (
         "google",
@@ -682,9 +681,8 @@ pub fn harvest_blocking(engine: &str) -> Result<String> {
         }
     }
 
-    // The upstream session completes seconds after load (its
-    // WebSocket challenge exchange): poll the jar until the engine's
-    // clearance cookie appears.
+    // The upstream session often completes seconds after load; poll the
+    // jar until the engine's marker cookie appears.
     let clearance = clearance_for(engine);
     let deadline = Instant::now() + Duration::from_secs(40);
     let mut cookies;
@@ -716,14 +714,22 @@ pub fn harvest_blocking(engine: &str) -> Result<String> {
             } else {
                 "clearance-timeout"
             });
+            // No marker cookie means the visit did not complete - the jar
+            // would be unusable. Fail so callers don't cache or use it.
+            if !got_clearance {
+                return Err(Error::blocked(
+                    "bootstrap",
+                    crate::error::BlockDetails::BotDetection,
+                ));
+            }
             break;
         }
         std::thread::sleep(Duration::from_millis(1500));
     }
 
-    // Settle: the site reloads itself onto the real page once the challenge
-    // clears. Wait for that navigation to complete so the jar reflects the
-    // final (rotated) cookies and the server-side session is cemented.
+    // Settle: many sites reload onto the real page once their background
+    // handshake finishes, issuing final (rotated) cookies afterwards.
+    // Wait for that navigation to complete before reading the jar.
     let settle_deadline = Instant::now() + Duration::from_secs(45);
     while Instant::now() < settle_deadline {
         ws_send(
@@ -746,7 +752,7 @@ pub fn harvest_blocking(engine: &str) -> Result<String> {
                 let (href, ready) = state.split_once('|').unwrap_or(("", ""));
                 let on_target = href.contains("/search")
                     && !href.contains("check=1")
-                    && !href.contains("ddos-guard");
+                    && !href.contains("/check");
                 if on_target && ready == "complete" {
                     trace("settled-on-target");
                     break;
@@ -762,6 +768,18 @@ pub fn harvest_blocking(engine: &str) -> Result<String> {
             Err(e) => return Err(e),
         }
         std::thread::sleep(Duration::from_millis(700));
+    }
+
+    // Re-read the jar AFTER settling: rotation happens during/after the
+    // reload, so pre-settle cookies may already be superseded.
+    ws_send(
+        &mut ws,
+        &serde_json::json!({"id": next_id, "method": "Network.getCookies"}),
+    )?;
+    if let Ok(res) = ws_recv_until(&mut ws, next_id, Duration::from_secs(10)) {
+        if let Some(arr) = res.get("cookies") {
+            cookies = arr.clone();
+        }
     }
 
     let matchers = domains_for(engine);
