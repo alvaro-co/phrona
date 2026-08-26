@@ -19,7 +19,7 @@ rust-version = "1.85"
 
 [workspace.dependencies]
 phrona = { path = "crates/phrona", version = "0.1.1" }
-wreq = { version = "6.0.0-rc.29", features = ["cookies", "gzip", "brotli", "zstd", "deflate", "charset", "stream"] }
+wreq = { version = "6.0.0-rc.31", features = ["cookies", "gzip", "brotli", "zstd", "deflate", "charset", "stream"] }
 wreq-util = { version = "3.0.0-rc.14", features = ["emulation"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync", "net", "signal"] }
 parking_lot = "0.12"
@@ -36,7 +36,7 @@ percent-encoding = "2"
 regex = "1"
 chrono = { version = "0.4", features = ["serde"] }
 futures = "0.3"
-rand = "0.9"
+rand = "0.10"
 clap = { version = "4", features = ["derive"] }
 clap_complete = "4"
 anyhow = "1"
