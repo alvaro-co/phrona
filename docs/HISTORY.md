@@ -1,4 +1,4 @@
-## (unreleased) perfection pass: robustness, dead code, staleness
+### perfection pass: robustness, dead code, staleness
 
 - Orchestrator: blank queries rejected before any network; page
   normalized to >= 1 at the choke point (12 engine underflows gone);
@@ -42,7 +42,16 @@
   API field lists corrected (`info`, `source`, `image_url`),
   web console lists all categories, `search_sync` semantics fixed.
 
-## (unreleased) new engines: github, arxiv, archive_org
+## (2026-09-04) v0.3.0
+
+- 29 engines across 8 categories (`github`/`code`, `arxiv`/`papers`,
+  `archive_org`/`archives` are new); 199 offline tests green, zero
+  clippy warnings; binaries + Python wheels publish from the `v0.3.0`
+  tag via the release workflow.
+- The three sections below detail the release: new engines, the audit
+  pass, and the perfection pass.
+
+### new engines: github, arxiv, archive_org
 
 - Three new engines behind three new categories: `github` (`code`,
   public repo search - code search needs auth and stays out), `arxiv`
@@ -57,7 +66,7 @@
   blocked. New `quick-xml` dependency (pure Rust, no system packages).
 - Fixtures captured live for all three; offline parser tests included.
 
-## (unreleased) audit pass: orchestrator, classification, parsers
+### audit pass: orchestrator, classification, parsers
 
 - Orchestrator: retry successes now count toward `any_ok` (previously an
   all-fail scrape plus a successful session retry still errored);
