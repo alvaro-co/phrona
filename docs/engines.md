@@ -1,13 +1,13 @@
 # Engine reference
 
-26 engines in 5 categories, all static stateless `Engine` instances
+29 engines in 8 categories, all static stateless `Engine` instances
 registered in `crates/phrona/src/engine.rs` (order = priority).
 
 Status is the observed outcome from a datacenter IP (August 2026);
 engines marked *IP-blocked* work from residential/clean IPs or through
 proxies - their parsers are fixture-tested and degrade gracefully
 (structured `Blocked`/`RateLimited` reports) when the network is
-hostile. **22-26 of 26 engines return live results from this network** depending
+hostile. **22-29 of 29 engines return live results from this network** depending
 on the hour (qwant
 additionally requires running the harvester with `qwant`; brave/grokipedia
 occasionally rate-limit or 502 transiently);
@@ -42,6 +42,9 @@ built in).
 | bing_videos | videos | `https://www.bing.com/videos/asyncv2` | works |
 | brave_videos | videos | `https://search.brave.com/videos` | works |
 | annas_archive | books | `https://annas-archive.{gd,li,gl,se}/search` | works with a bootstrap session (auto-refreshed when enabled) |
+| github | code | `https://api.github.com/search/repositories` | works (10 search req/min shared quota; exhaustion reports rate-limited) |
+| arxiv | papers | `https://export.arxiv.org/api/query` | works (client-side 3s politeness throttle) |
+| archive_org | archives | `https://archive.org/advancedsearch.php` | works |
 
 Suggestion sources (7): duckduckgo, google, bing, brave, startpage,
 qwant, wikipedia - all live-verified.
@@ -54,17 +57,28 @@ exit.
 
 ## Engine details and quirks
 
+- **github** - public repository search only (code search needs
+  authentication and is out of scope); the 10 req/min shared quota is
+  reported as rate-limited, never as a block.
+- **arxiv** - Atom feed parsed with `quick-xml`; a process-wide 3s gap
+  between requests honors the upstream politeness rule.
+- **archive_org** - `advancedsearch.php` JSON; metadata fields
+  (identifier/title/description/mediatype/creator/date) arrive as strings
+  *or* single-element lists; mediatype/creator/date fold into the
+  description head.
+
+
 - **bing** - HTML; `first=` paging; news via the
   `infinitescrollajax` JSON endpoint with `(page-1)*10+1` paging;
   videos from `asyncv2` with the result markup inside a `<noscript>`
   block (must be unwrapped before HTML parsing - see
   `regex_strip_noscript` in `bing_videos.rs`).
-- **brave** - JSON API blobs extracted from HTML `data-serpapi` scripts
-  (js_to_json); suggestion + results endpoints combined; safesearch /
-  region travel in a shared cookie built by `brave::headers_for`
-  (honored by every vertical including news); thumbnail URLs are
-  base64-encoded (`/g:ce/...`), decoded with URL-safe and standard
-  base64 (`brave_b64_decode`); page 2 via `?offset=`.
+- **brave** - SSR HTML (`div[data-type="web"]` for web,
+  `div.result-wrapper` for news/videos via the shared wrapper parser);
+  safesearch / region travel in a shared cookie built by
+  `brave::headers_for` (honored by every vertical including news);
+  thumbnail URLs are base64-encoded (`/g:ce/...`), decoded with URL-safe
+  and standard base64 (`brave_b64_decode`); page 2 via `?offset=`.
 - **duckduckgo** - HTML endpoint with a plain GET (no `vqd` needed; the
   POST variant triggers the anomaly/bot page); images/news/videos use
   the JSON `vqd`-signed endpoints - the token is fetched from
@@ -107,8 +121,10 @@ exit.
   (`rules.difficulty` zero hex digits over `SHA-256(randomData ++ nonce)`),
   solves it, redeems it at
   `/.within.website/x/cmd/anubis/api/pass-challenge` and retries the POST
-  on the same cookie jar. Difficulty > 16 or nonces past 2^28 are refused
-  (reported as blocked). The `sc` token dance is unchanged (GET homepage
+  on the same cookie jar. Unparseable challenges and difficulties above
+  16 are rejected at extraction; difficulties above 8 are refused at
+  solve time (16^d expected hashes would be a CPU-DoS, not a challenge);
+  nonces past 2^28 give up (reported as blocked). The `sc` token dance is unchanged (GET homepage
   -> `input[name=sc]` -> cached in `EngineShared.sc`, TTL 1 h);
   suggestions come from `/suggestions`; images via the same POST flow
   with `cat=images`. Results are parsed from the embedded React payload
@@ -162,7 +178,7 @@ and Qwant/DDG check the API `status` field.
 `crates/phrona/tests/fixtures/` holds one captured live page per engine
 plus a `meta.json` sidecar recording each capture's `status`,
 `content_type` and `parsed` verdict. Tests run fully offline and never hit
-the network. As of this pass, 22 of 26 fixtures are verified-parseable
+the network. As of this pass, 25 of 29 fixtures are verified-parseable
 live captures; the four skipped ones are exactly the IP-blocked engines
 (google_web, mojeek_web/images, qwant_web), whose tests assert graceful
 behavior instead.

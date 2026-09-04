@@ -4,7 +4,6 @@ use std::net::{IpAddr, Ipv4Addr};
 
 use futures::StreamExt;
 use serde::Serialize;
-use serde::Serializer;
 
 use scraper::{Html, Selector};
 use url::Url;
@@ -81,7 +80,7 @@ pub fn is_safe_ip(ip: IpAddr) -> bool {
 }
 
 /// A readable-text extraction of a web page (AI grounding).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ExtractedPage {
     /// The final URL after any redirects.
     pub url: String,
@@ -93,19 +92,6 @@ pub struct ExtractedPage {
     pub text: String,
     /// Absolute http(s) image URLs found on the page (up to 10).
     pub images: Vec<String>,
-}
-
-impl Serialize for ExtractedPage {
-    fn serialize<S: Serializer>(&self, s: S) -> std::result::Result<S::Ok, S::Error> {
-        use serde::ser::SerializeStruct;
-        let mut st = s.serialize_struct("ExtractedPage", 5)?;
-        st.serialize_field("url", &self.url)?;
-        st.serialize_field("title", &self.title)?;
-        st.serialize_field("description", &self.description)?;
-        st.serialize_field("text", &self.text)?;
-        st.serialize_field("images", &self.images)?;
-        st.end()
-    }
 }
 
 /// Maximum redirect hops followed by [`extract`], each re-validated for SSRF.
@@ -147,38 +133,43 @@ pub async fn extract(
         let parsed =
             Url::parse(&current).map_err(|_| Error::invalid_query("extract", "invalid URL"))?;
         if parsed.scheme() != "http" && parsed.scheme() != "https" {
-            return Err(Error::invalid_query(
-                "extract",
-                "unsupported URL scheme (http/https only)",
-            ));
+            return Err(Error::invalid_query("extract", Error::SSRF_SCHEME));
         }
         let host = parsed
             .host()
-            .ok_or_else(|| Error::invalid_query("extract", "URL has no host"))?;
+            .ok_or_else(|| Error::invalid_query("extract", Error::SSRF_NO_HOST))?;
         if !client.target_policy().domain_allowed(&host.to_string()) {
-            return Err(Error::invalid_query(
-                "extract",
-                "target host is blocked by the domain allow/deny policy",
-            ));
+            return Err(Error::invalid_query("extract", Error::SSRF_DOMAIN_POLICY));
         }
         let port = parsed
             .port_or_known_default()
             .ok_or_else(|| Error::invalid_query("extract", "URL has no port"))?;
-        let safe = match host {
-            url::Host::Ipv4(v4) => is_safe_ip(IpAddr::V4(v4)),
-            url::Host::Ipv6(v6) => is_safe_ip(IpAddr::V6(v6)),
-            url::Host::Domain(name) => {
-                let addrs = tokio::net::lookup_host((name, port))
+        // Intranet operators may disable the guard via
+        // `security.block_private_ips: false`.
+        let safe = if !client.target_policy().block_private {
+            if let url::Host::Domain(name) = &host {
+                let mut addrs = tokio::net::lookup_host((*name, port))
                     .await
-                    .map_err(|_| Error::invalid_query("extract", "host resolution failed"))?;
-                addrs.into_iter().all(|sa| is_safe_ip(sa.ip()))
+                    .map_err(|_| Error::invalid_query("extract", Error::SSRF_DNS))?;
+                if addrs.next().is_none() {
+                    return Err(Error::invalid_query("extract", Error::SSRF_DNS));
+                }
+            }
+            true
+        } else {
+            match host {
+                url::Host::Ipv4(v4) => is_safe_ip(IpAddr::V4(v4)),
+                url::Host::Ipv6(v6) => is_safe_ip(IpAddr::V6(v6)),
+                url::Host::Domain(name) => {
+                    let addrs = tokio::net::lookup_host((name, port))
+                        .await
+                        .map_err(|_| Error::invalid_query("extract", Error::SSRF_DNS))?;
+                    addrs.into_iter().all(|sa| is_safe_ip(sa.ip()))
+                }
             }
         };
         if !safe {
-            return Err(Error::invalid_query(
-                "extract",
-                "SSRF blocked: IP address is in a private/restricted range",
-            ));
+            return Err(Error::invalid_query("extract", Error::SSRF_PRIVATE_IP));
         }
 
         let resp = client.get_no_redirect(&current).await?;
@@ -270,10 +261,12 @@ pub fn extract_from_html(
 }
 
 fn collect_text(node: &scraper::ElementRef) -> String {
+    static BLOCKS: std::sync::OnceLock<Selector> = std::sync::OnceLock::new();
+    let blocks = BLOCKS.get_or_init(|| {
+        Selector::parse("p, h1, h2, h3, h4, h5, h6, li, blockquote, pre, td, th").unwrap()
+    });
     let mut out = String::new();
-    for child in node
-        .select(&Selector::parse("p, h1, h2, h3, h4, h5, h6, li, blockquote, pre, td, th").unwrap())
-    {
+    for child in node.select(blocks) {
         let t = parse::text_of(&child);
         if !t.is_empty() {
             out.push_str(&t);

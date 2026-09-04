@@ -35,6 +35,10 @@ const CHALLENGE_MARKER: &str = "anubis_challenge";
 /// up and report a block instead of burning CPU forever.
 const MAX_NONCE: u64 = 1 << 28;
 
+/// Difficulties above this need 16^d expected hashes (difficulty 9 ≈ 68B);
+/// refusing them keeps a hostile policy change from pinning a CPU.
+const MAX_SOLVABLE_DIFFICULTY: u32 = 8;
+
 /// A parsed Anubis challenge.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Challenge {
@@ -91,12 +95,19 @@ impl Challenge {
     }
 
     /// Solve the proof-of-work: returns `(hex_digest, nonce)`, or `None`
-    /// when no solution exists below [`MAX_NONCE`].
+    /// when no solution exists below `MAX_NONCE`.
     ///
     /// Upstream semantics (Anubis worker `sha256-*.mjs`): `difficulty`
     /// counts leading zero *hex digits* - i.e. `floor(difficulty / 2)`
     /// whole zero bytes plus a high-nibble zero when `difficulty` is odd.
+    ///
+    /// Difficulties past `MAX_SOLVABLE_DIFFICULTY` are refused outright:
+    /// at 16^d expected hashes they are a deliberate CPU-DoS, not a real
+    /// challenge (upstream ships difficulty 4).
     pub fn solve(&self) -> Option<(String, u64)> {
+        if self.difficulty > MAX_SOLVABLE_DIFFICULTY {
+            return None;
+        }
         let diff = self.difficulty;
         let full_bytes = (diff / 2) as usize;
         let odd_nibble = diff % 2 == 1;
@@ -126,7 +137,12 @@ impl Challenge {
     /// lands in `client`'s cookie jar and subsequent requests pass.
     pub async fn redeem(&self, client: &HttpClient, origin: &str, redir: &str) -> Result<()> {
         let started = Instant::now();
-        let Some((hash, nonce)) = self.solve() else {
+        // CPU-bound proof-of-work: keep it off the async worker threads
+        let worker = self.clone();
+        let solved = tokio::task::spawn_blocking(move || worker.solve())
+            .await
+            .map_err(|_| Error::blocked("anubis", BlockDetails::BotDetection))?;
+        let Some((hash, nonce)) = solved else {
             return Err(Error::blocked("anubis", BlockDetails::BotDetection));
         };
         let url = parse::with_query(

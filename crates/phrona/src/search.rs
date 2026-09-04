@@ -102,31 +102,52 @@ impl SearchClient {
         policy: TargetPolicy,
     ) -> Result<Self> {
         let timeout = timeout.unwrap_or_else(|| std::time::Duration::from_secs(10));
-        let pool = ProxyPool::new(proxies.unwrap_or_default(), profile, timeout, policy)?;
-        let client = Self {
+        let mut client = Self::build(profile, timeout, proxies.unwrap_or_default(), policy)?;
+        // opt-in: no browser is ever launched unless explicitly
+        // enabled via builder, config, or environment
+        client.auto_bootstrap = env_auto_bootstrap().unwrap_or(false);
+        Self::warm_start(&client);
+        Ok(client)
+    }
+
+    /// Shared constructor without any cache warm-start; callers run
+    /// [`Self::warm_start`] once after applying their own pins.
+    fn build(
+        profile: Profile,
+        timeout: std::time::Duration,
+        proxies: Vec<String>,
+        policy: TargetPolicy,
+    ) -> Result<Self> {
+        let pool = ProxyPool::new(proxies, profile, timeout, policy)?;
+        Ok(Self {
             pool,
             shared: Arc::new(EngineShared::new()),
             concurrency: MAX_CONCURRENT_ENGINES,
             observer: Arc::new(NoopEngineObserver),
-            // opt-in: no browser is ever launched unless explicitly
-            // enabled via builder, config, or environment
-            auto_bootstrap: env_auto_bootstrap().unwrap_or(false),
-        };
-        Self::warm_start(&client);
-        Ok(client)
+            auto_bootstrap: false,
+        })
     }
 
     /// Build a client from a [`PhronaConfig`]: impersonation profile,
     /// timeout, proxy pool, domain policy and per-search concurrency limit.
     pub fn with_config(cfg: &PhronaConfig) -> Result<Self> {
-        let mut client = Self::with_options(
+        let mut client = Self::build(
             cfg.profile(),
-            Some(cfg.timeout()),
-            Some(cfg.engines.proxies.clone()),
+            cfg.timeout(),
+            cfg.engines.proxies.clone(),
             TargetPolicy::from_security(&cfg.security),
         )?;
         client.concurrency = cfg.concurrency_limit().max(1);
-        client.auto_bootstrap = cfg.engines.auto_bootstrap;
+        // config key wins when set, but the canonical environment alias
+        // opts in too (mirrors `with_options`, which reads the env
+        // directly): a bare `PHRONA_AUTO_BOOTSTRAP=1` must work on every
+        // construction path, not just the non-config one
+        client.auto_bootstrap = cfg.engines.auto_bootstrap || env_auto_bootstrap().unwrap_or(false);
+        // sole owner here, so `get_mut` cannot fail; floored to avoid
+        // token-thrash from tiny operator values
+        if let Some(shared) = Arc::get_mut(&mut client.shared) {
+            shared.cache_ttl = std::time::Duration::from_secs(cfg.search.cache_ttl_secs.max(60));
+        }
         for (engine, cookies) in &cfg.engines.bootstrap_cookies {
             client.shared.set_bootstrap(engine, cookies.clone());
         }
@@ -206,6 +227,23 @@ impl SearchClient {
         self.concurrency
     }
 
+    /// Override the per-search engine concurrency cap (floored at 1).
+    /// Chainable; surfaces use it to apply `search.concurrency_limit`
+    /// without rebuilding the client.
+    pub fn with_concurrency(mut self, limit: usize) -> Self {
+        self.concurrency = limit.max(1);
+        self
+    }
+
+    /// Override the TTL of the engine-scoped token caches (`vqd`/`sc`),
+    /// floored at 60s like the config path. Chainable.
+    pub fn with_cache_ttl(mut self, secs: u64) -> Self {
+        if let Some(shared) = Arc::get_mut(&mut self.shared) {
+            shared.cache_ttl = std::time::Duration::from_secs(secs.max(60));
+        }
+        self
+    }
+
     /// Attach an observer notified after every engine request completes
     /// (`ok` / `empty` / `error` plus scope, kind and elapsed time).
     pub fn with_observer(mut self, observer: Arc<dyn EngineObserver>) -> Self {
@@ -219,6 +257,140 @@ impl SearchClient {
         self.pool.first()
     }
 
+    /// Record a successful engine run (empty or not): merge its items into
+    /// `answers`/`raw`, notify the observer, and return its report. The
+    /// caller files it (`push` for first runs, `replace` for retries).
+    fn record_ok(
+        &self,
+        name: &'static str,
+        items: Vec<RawResult>,
+        elapsed: std::time::Duration,
+        answers: &mut Vec<RawResult>,
+        raw: &mut Vec<RawResult>,
+    ) -> EngineReport {
+        let rep = if items.is_empty() {
+            Self::empty_report(name)
+        } else {
+            let n = items.len();
+            let (answers_part, raw_part): (Vec<_>, Vec<_>) =
+                items.into_iter().partition(|r| r.url.is_empty());
+            answers.extend(answers_part);
+            raw.extend(raw_part);
+            Self::ok_report(name, n)
+        };
+        self.notify(
+            name,
+            &rep.status,
+            rep.scope.as_deref(),
+            rep.kind.as_deref(),
+            elapsed,
+        );
+        rep
+    }
+
+    /// Record a failed engine run: notify the observer and return its
+    /// report for filing.
+    fn record_err(
+        &self,
+        name: &'static str,
+        e: &Error,
+        elapsed: std::time::Duration,
+    ) -> EngineReport {
+        let rep = Self::err_report(name, e);
+        self.notify(
+            name,
+            &rep.status,
+            rep.scope.as_deref(),
+            rep.kind.as_deref(),
+            elapsed,
+        );
+        rep
+    }
+
+    /// Notify the observer of a completed engine run.
+    fn notify(
+        &self,
+        name: &'static str,
+        status: &str,
+        scope: Option<&str>,
+        kind: Option<&str>,
+        elapsed: std::time::Duration,
+    ) {
+        self.observer
+            .on_engine_done(name, status, scope, kind, elapsed);
+    }
+
+    /// Replace the report for a retried engine in place (matched by name;
+    /// reports arrive in completion order, so positional updates are wrong).
+    fn replace_report(&self, reports: &mut [EngineReport], name: &str, report: EngineReport) {
+        if let Some(slot) = reports.iter_mut().find(|r| r.name == name) {
+            *slot = report;
+        }
+    }
+
+    /// Build the success report for an engine run returning `n` items.
+    fn ok_report(name: &str, n: usize) -> EngineReport {
+        EngineReport {
+            name: name.to_string(),
+            status: "ok".into(),
+            results: n,
+            error: None,
+            scope: None,
+            kind: None,
+        }
+    }
+
+    /// Build the report for an engine run returning zero items.
+    fn empty_report(name: &str) -> EngineReport {
+        EngineReport {
+            name: name.to_string(),
+            status: "empty".into(),
+            results: 0,
+            error: None,
+            scope: None,
+            kind: None,
+        }
+    }
+
+    /// Build the failure report for an engine run.
+    fn err_report(name: &str, e: &Error) -> EngineReport {
+        EngineReport {
+            name: name.to_string(),
+            status: "error".into(),
+            results: 0,
+            error: Some(e.to_string()),
+            scope: Some(format!("{:?}", e.scope())),
+            kind: Some(format!("{:?}", e.kind())),
+        }
+    }
+    /// Run one engine under the concurrency semaphore. Never panics: a closed
+    /// semaphore (only possible during shutdown) surfaces as an internal error.
+    async fn run_engine(
+        engine: &'static dyn crate::engine::Engine,
+        client: &HttpClient,
+        shared: &EngineShared,
+        sem: &Semaphore,
+        opts: &SearchOptions,
+    ) -> (&'static str, Result<Vec<RawResult>>, std::time::Duration) {
+        let started = Instant::now();
+        let _permit = match sem.acquire().await {
+            Ok(p) => p,
+            Err(_) => {
+                return (
+                    engine.name(),
+                    Err(Error::internal("orchestrator", "shutting down")),
+                    started.elapsed(),
+                );
+            }
+        };
+        let ctx = EngineContext {
+            client,
+            opts,
+            shared,
+        };
+        let r = engine.search(&ctx).await;
+        (engine.name(), r, started.elapsed())
+    }
     /// Run a search across all enabled engines for the category.
     ///
     /// Each engine task is assigned one sticky `HttpClient` from the proxy
@@ -233,6 +405,17 @@ impl SearchClient {
     /// fetched in parallel with the scraping via `tokio::join!`.
     pub async fn search(&self, opts: SearchOptions) -> Result<SearchResponse> {
         let started = Instant::now();
+        // normalize once at the choke point so no engine does page
+        // arithmetic on a zero page (underflow) and blank queries never
+        // become meaningless upstream traffic
+        let mut opts = opts;
+        opts.page = opts.page.max(1);
+        if opts.query.trim().is_empty() {
+            return Err(Error::invalid_query(
+                "orchestrator",
+                "query must not be empty",
+            ));
+        }
         let deadline = started + opts.timeout;
         let max_results = opts.max_results;
         let category = opts.category;
@@ -247,21 +430,7 @@ impl SearchClient {
         let sem = Arc::new(Semaphore::new(self.concurrency));
 
         let futs = engines.iter().map(|engine| {
-            let client = self.pool.get_client();
-            let shared = Arc::clone(&self.shared);
-            let sem = Arc::clone(&sem);
-            let opts = &opts;
-            async move {
-                let ctx = EngineContext {
-                    client,
-                    opts,
-                    shared: &shared,
-                };
-                let started = Instant::now();
-                let _permit = sem.acquire().await.expect("semaphore closed");
-                let r = engine.search(&ctx).await;
-                (engine.name(), r, started.elapsed())
-            }
+            Self::run_engine(*engine, self.pool.get_client(), &self.shared, &sem, &opts)
         });
         let mut in_flight = FuturesUnordered::from_iter(futs);
 
@@ -269,90 +438,74 @@ impl SearchClient {
             let mut answers: Vec<RawResult> = Vec::new();
             let mut raw: Vec<RawResult> = Vec::new();
             let mut reports: Vec<EngineReport> = Vec::new();
+            // per-engine session-refresh candidacy, keyed by engine name
+            // (reports alone only carry stringified kinds)
+            let mut refreshable: std::collections::HashMap<&'static str, bool> =
+                std::collections::HashMap::new();
             let mut any_ok = false;
 
-            while let Some((name, result, elapsed)) = in_flight.next().await {
-                if Instant::now() >= deadline {
-                    drop(in_flight);
+            // Deadline-aware: a hung engine must not stall past `deadline`
+            // waiting on `next()`.
+            while !in_flight.is_empty() {
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                if remaining.is_zero() {
                     break;
                 }
+                let next = tokio::time::timeout(remaining, in_flight.next()).await;
+                let Some((name, result, elapsed)) = next.ok().flatten() else {
+                    break;
+                };
                 match result {
                     Ok(items) => {
                         any_ok = true;
-                        if items.is_empty() {
-                            self.observer
-                                .on_engine_done(name, "empty", None, None, elapsed);
-                            reports.push(EngineReport {
-                                name: name.to_string(),
-                                status: "empty".into(),
-                                results: 0,
-                                error: None,
-                                scope: None,
-                                kind: None,
-                            });
-                            continue;
-                        }
-                        let n = items.len();
-                        self.observer
-                            .on_engine_done(name, "ok", None, None, elapsed);
-                        let (answers_part, raw_part): (Vec<_>, Vec<_>) =
-                            items.into_iter().partition(|r| r.url.is_empty());
-                        answers.extend(answers_part);
-                        raw.extend(raw_part);
-                        reports.push(EngineReport {
-                            name: name.to_string(),
-                            status: "ok".into(),
-                            results: n,
-                            error: None,
-                            scope: None,
-                            kind: None,
-                        });
+                        refreshable.insert(name, false);
+                        let rep = self.record_ok(name, items, elapsed, &mut answers, &mut raw);
+                        reports.push(rep);
                     }
                     Err(e) => {
-                        let scope = format!("{:?}", e.scope());
-                        let kind = format!("{:?}", e.kind());
-                        self.observer.on_engine_done(
-                            name,
-                            "error",
-                            Some(&scope),
-                            Some(&kind),
-                            elapsed,
-                        );
-                        reports.push(EngineReport {
-                            name: name.to_string(),
-                            status: "error".into(),
-                            results: 0,
-                            error: Some(e.to_string()),
-                            scope: Some(scope),
-                            kind: Some(kind),
-                        });
+                        refreshable.insert(name, e.may_require_session());
+                        let rep = self.record_err(name, &e, elapsed);
+                        reports.push(rep);
                     }
                 }
                 if !opts.probe_all && raw.len() >= max_results {
-                    drop(in_flight);
                     break;
                 }
             }
-            (raw, answers, reports, any_ok)
+            (raw, answers, reports, refreshable, any_ok)
         };
 
         let suggestions = async {
             if category == Category::Web && opts.page == 1 {
+                // bounded like the scrape: suggestions must not outlive the
+                // search deadline on their own
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                if remaining.is_zero() {
+                    return Vec::new();
+                }
                 let client = self.pool.get_client();
-                crate::engines::suggest::suggest_all(client, &opts.query, &opts.region_param())
+                let region = opts.region_param();
+                let fut = crate::engines::suggest::suggest_all(client, &opts.query, &region);
+                tokio::time::timeout(remaining, fut)
                     .await
-                    .into_iter()
-                    .flat_map(|(_, s)| s)
-                    .filter(|s| !s.is_empty())
-                    .take(10)
-                    .collect()
+                    .ok()
+                    .map(|all| {
+                        all.into_iter()
+                            .flat_map(|(_, s)| s)
+                            .filter(|s| !s.is_empty())
+                            .take(10)
+                            .collect()
+                    })
+                    .unwrap_or_default()
             } else {
                 Vec::new()
             }
         };
 
-        let ((mut raw, mut answers, mut reports, any_ok), suggestions) =
-            tokio::join!(scrape, suggestions);
+        let ((mut raw, mut answers, mut reports, refreshable, mut any_ok), suggestions): (
+            _,
+            Vec<String>,
+        ) = tokio::join!(scrape, suggestions);
 
         // Silent bypass: engines whose anti-bot trusts only real-browser
         // cookies get one headless harvest + retry when blocked.
@@ -364,12 +517,9 @@ impl SearchClient {
                 .iter()
                 .filter(|r| {
                     r.status == "error"
-                        // ErrorKind::Debug renders as "Blocked(...)" /
-                        // "NetworkFailure" - both mean the session cookies
-                        // may be missing/stale for a bootstrap engine
-                        && r.kind.as_deref().is_some_and(|k| {
-                            k.starts_with("Blocked") || k.starts_with("NetworkFailure")
-                        })
+                        // failures that a fresh browser session may fix
+                        // (anti-bot blocks, transport failures)
+                        && refreshable.get(r.name.as_str()).copied().unwrap_or(false)
                         && crate::bootstrap::seed_for(&r.name).is_some()
                         && self.shared.bootstrap_stale(&r.name)
                         && self.refresh_spacing_ok(&r.name)
@@ -383,14 +533,27 @@ impl SearchClient {
                 );
             }
             if !stale.is_empty() {
-                for engine in &stale {
+                // harvest concurrently, each attempt bounded: a stuck
+                // browser (or a slow first-time download) must not stall
+                // the search indefinitely, and sequential harvests could
+                // stack past any reasonable deadline
+                let jobs = stale.iter().map(|engine| {
                     let name = engine.name();
-                    match tokio::task::spawn_blocking({
-                        move || crate::bootstrap::harvest_blocking(name)
-                    })
-                    .await
-                    {
-                        Ok(Ok(jar)) => {
+                    async move {
+                        let res = tokio::time::timeout(
+                            crate::bootstrap::HARVEST_TIMEOUT,
+                            tokio::task::spawn_blocking(move || {
+                                crate::bootstrap::harvest_blocking(name)
+                            }),
+                        )
+                        .await;
+                        (name, res)
+                    }
+                });
+                let mut pending = FuturesUnordered::from_iter(jobs);
+                while let Some((name, res)) = pending.next().await {
+                    match res {
+                        Ok(Ok(Ok(jar))) => {
                             if std::env::var_os("PHRONA_DEBUG_BOOTSTRAP").is_some() {
                                 eprintln!("[dbg bootstrap] {name}: harvested {} bytes", jar.len());
                             }
@@ -403,100 +566,65 @@ impl SearchClient {
                             .await;
                             self.shared.set_bootstrap(name, jar);
                         }
-                        Ok(Err(e)) => {
+                        Ok(Ok(Err(e))) => {
                             if std::env::var_os("PHRONA_DEBUG_BOOTSTRAP").is_some() {
                                 eprintln!("[dbg bootstrap] {name}: harvest failed: {e}");
                             }
-                            continue;
                         }
-                        Err(_) => continue,
+                        Ok(Err(_)) => {
+                            if std::env::var_os("PHRONA_DEBUG_BOOTSTRAP").is_some() {
+                                eprintln!("[dbg bootstrap] {name}: harvest task panicked");
+                            }
+                        }
+                        Err(_) => {
+                            if std::env::var_os("PHRONA_DEBUG_BOOTSTRAP").is_some() {
+                                eprintln!(
+                                    "[dbg bootstrap] {name}: harvest timed out after {}s",
+                                    crate::bootstrap::HARVEST_TIMEOUT.as_secs()
+                                );
+                            }
+                        }
                     }
+                    // spacing applies to attempts, not just successes: a
+                    // hanging browser must not re-hang every search
                     self.shared.mark_bootstrap_refreshed(name);
                 }
 
                 // rerun the blocked engines once with fresh cookies
                 let sem2 = Arc::new(Semaphore::new(self.concurrency));
                 let futs = stale.iter().map(|engine| {
-                    let client = self.pool.get_client();
-                    let shared = Arc::clone(&self.shared);
-                    let sem = Arc::clone(&sem2);
-                    let opts = &opts;
-                    async move {
-                        let ctx = EngineContext {
-                            client,
-                            opts,
-                            shared: &shared,
-                        };
-                        let started = Instant::now();
-                        let _permit = sem.acquire().await.expect("semaphore closed");
-                        (engine.name(), engine.search(&ctx).await, started.elapsed())
-                    }
+                    Self::run_engine(*engine, self.pool.get_client(), &self.shared, &sem2, &opts)
                 });
                 let mut retry = FuturesUnordered::from_iter(futs);
-                while let Some((name, result, elapsed)) = retry.next().await {
-                    let slot = reports.iter_mut().find(|r| r.name == name);
+                while !retry.is_empty() {
+                    let remaining = deadline.saturating_duration_since(Instant::now());
+                    if remaining.is_zero() {
+                        break;
+                    }
+                    let next = tokio::time::timeout(remaining, retry.next()).await;
+                    let Some((name, result, elapsed)) = next.ok().flatten() else {
+                        break;
+                    };
                     match result {
-                        Ok(items) if items.is_empty() => {
-                            if let Some(r) = slot {
-                                *r = EngineReport {
-                                    name: name.to_string(),
-                                    status: "empty".into(),
-                                    results: 0,
-                                    error: None,
-                                    scope: None,
-                                    kind: None,
-                                };
-                            }
-                            self.observer
-                                .on_engine_done(name, "empty", None, None, elapsed);
-                        }
                         Ok(items) => {
-                            let n = items.len();
-                            if let Some(r) = slot {
-                                *r = EngineReport {
-                                    name: name.to_string(),
-                                    status: "ok".into(),
-                                    results: n,
-                                    error: None,
-                                    scope: None,
-                                    kind: None,
-                                };
-                            }
-                            self.observer
-                                .on_engine_done(name, "ok", None, None, elapsed);
-                            let (a_part, r_part): (Vec<_>, Vec<_>) =
-                                items.into_iter().partition(|x| x.url.is_empty());
-                            answers.extend(a_part);
-                            raw.extend(r_part);
+                            any_ok = true;
+                            let rep = self.record_ok(name, items, elapsed, &mut answers, &mut raw);
+                            self.replace_report(&mut reports, name, rep);
                         }
                         Err(e) => {
                             if std::env::var_os("PHRONA_DEBUG_BOOTSTRAP").is_some() {
                                 eprintln!("[dbg bootstrap] {name} retry failed: {e}");
                             }
-                            let scope_s = format!("{:?}", e.scope());
-                            let kind_s = format!("{:?}", e.kind());
-                            if let Some(r) = slot {
-                                *r = EngineReport {
-                                    name: name.to_string(),
-                                    status: "error".into(),
-                                    results: 0,
-                                    error: Some(e.to_string()),
-                                    scope: Some(scope_s.clone()),
-                                    kind: Some(kind_s.clone()),
-                                };
-                            }
-                            self.observer.on_engine_done(
-                                name,
-                                "error",
-                                Some(&scope_s),
-                                Some(&kind_s),
-                                elapsed,
-                            );
+                            let rep = self.record_err(name, &e, elapsed);
+                            self.replace_report(&mut reports, name, rep);
                         }
                     }
                 }
             }
         }
+
+        // deterministic output: reports arrived in completion order
+        reports.sort_by(|a, b| a.name.cmp(&b.name));
 
         if !any_ok {
             // Availability probing wants the full per-engine report even for
@@ -575,14 +703,19 @@ impl SearchClient {
 /// Convert a merged, ranked group into a typed [`ResultItem`] for the
 /// response. The category is inferred from the engine that introduced the
 /// result; unknown engines map to `Web`. `idx` is the zero-based result
-/// index (position becomes `idx + 1`). Returns `None` only when a result
-/// carries no URL and cannot be placed.
+/// index (position becomes `idx + 1`). Always returns `Some` today; the
+/// `Option` reserves future fallible mappings without breaking callers.
+///
+/// Newer categories reuse existing shapes on purpose (wire-compatible):
+/// `Code` and `Archives` render as web results (extra metadata folded
+/// into the description), `Papers` as book results (author/publisher/info
+/// fit papers exactly).
 pub fn to_result_item(g: GroupedResult, score: f64, idx: usize) -> Option<ResultItem> {
     let raw = g.result;
     let category = crate::engine::category_of_engine(&raw.engine);
     let position = idx + 1;
     match category {
-        Category::Web => Some(ResultItem::Web(WebResult {
+        Category::Web | Category::Code | Category::Archives => Some(ResultItem::Web(WebResult {
             title: raw.title,
             url: raw.url,
             description: raw.description,
@@ -626,7 +759,7 @@ pub fn to_result_item(g: GroupedResult, score: f64, idx: usize) -> Option<Result
             position,
             score,
         })),
-        Category::Books => Some(ResultItem::Book(crate::models::BookResult {
+        Category::Books | Category::Papers => Some(ResultItem::Book(crate::models::BookResult {
             title: raw.title,
             author: raw.author,
             publisher: raw.publisher,
@@ -641,9 +774,13 @@ pub fn to_result_item(g: GroupedResult, score: f64, idx: usize) -> Option<Result
 }
 
 /// Block a future on the ambient runtime, or a shared one otherwise.
+/// Inside a multi-thread runtime this yields the worker while blocking
+/// instead of deadlocking; on a current-thread runtime (or when no runtime
+/// exists and the shared one is used) it blocks directly. Prefer
+/// [`SearchClient::search`] from async code.
 pub fn block_on<F: std::future::Future>(fut: F) -> F::Output {
     match tokio::runtime::Handle::try_current() {
-        Ok(handle) => handle.block_on(fut),
+        Ok(handle) => tokio::task::block_in_place(|| handle.block_on(fut)),
         Err(_) => RUNTIME
             .get_or_init(|| tokio::runtime::Runtime::new().expect("tokio runtime"))
             .block_on(fut),
@@ -695,6 +832,21 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn blank_query_is_rejected_without_network() {
+        let client = SearchClient::new().unwrap();
+        for q in ["", "   ", "\t\n "] {
+            let err = client
+                .search(SearchOptions::new(q))
+                .await
+                .expect_err("blank query must fail");
+            assert!(
+                matches!(err.kind(), crate::error::ErrorKind::InvalidQuery { .. }),
+                "got: {err}"
+            );
+        }
+    }
+
     #[test]
     fn merge_keeps_results_and_answers() {
         // answer marker (empty url) + real results must all survive merging
@@ -736,6 +888,10 @@ mod tests {
             ("bing_news", "news"),
             ("bing_videos", "video"),
             ("annas_archive", "book"),
+            // newer categories reuse wire shapes (see to_result_item docs)
+            ("github", "web"),
+            ("archive_org", "web"),
+            ("arxiv", "book"),
         ] {
             let mut r = raw("title", "https://example.com/x");
             r.engine = engine.into();

@@ -1,3 +1,89 @@
+## (unreleased) perfection pass: robustness, dead code, staleness
+
+- Orchestrator: blank queries rejected before any network; page
+  normalized to >= 1 at the choke point (12 engine underflows gone);
+  harvests run concurrently and bounded (180s each, always counted
+  toward refresh spacing so a hanging browser cannot re-hang every
+  search); `PHRONA_AUTO_BOOTSTRAP=1` honored on the config path too;
+  new `with_concurrency` / `with_cache_ttl` builders (the CLI now
+  applies both from config instead of ignoring them).
+- Bootstrap: cached browser reused offline without a version fetch
+  (numeric version ordering); runtime-nesting-safe download driver
+  (works from current-thread runtimes); executable-bit `which`;
+  CDP ping/pong; empty `PHRONA_CONFIG_PATH` treated as unset.
+- Transport: mid-stream body errors keep timeout/network
+  classification; 64-bit content-length compare; DDG vertical helper
+  simplified; "a day ago" dates parse; annas all-empty reports schema
+  instead of phantom 503; GitHub pins the API version and honors
+  `Retry-After`/`x-ratelimit-reset`; archive.org yields `published`;
+  arXiv lock is now `parking_lot`.
+- Builders: `HttpClientBuilder::cookies(bool)` (the field was dead);
+  `Category::NAMES`/`list_str` and `Profile::ALL_NAMES` end stale
+  "expected one of" lists everywhere; `SearchResponse` gains
+  `images()/news()/videos()/books()` accessors; `ExtractedPage`
+  derives `Serialize`.
+- Parsers: hoisted per-loop selectors (google, bing_news, brave,
+  extract); bing reuses `time_param`; yahoo single selector;
+  `wikipedia_lang` falls back instead of `unreachable!`; suggest
+  parsers deduplicated; crypto documented with stack pads; ALTCHA
+  boundary renamed off the old project name.
+- Surfaces: `/v1/test` and `phrona test` probe concurrently;
+  `/health` derives counts from the registry; frontend serves embedded
+  assets zero-copy; MCP builds one service for all TCP connections;
+  zero-limit clamps cannot panic (`clamp` with min > max);
+  CLI extract clamps `max_chars`; Python clamps timeout (NaN-safe)
+  and lists engines without building a client; manual `bootstrap`
+  bounded with a timeout.
+- Tooling: `fetch_fixtures` covers all 29 engines (github/arxiv/
+  archive_org added), validates via real parsers, never aborts on one
+  failure; `dbg_parse` covers every engine.
+- Docs/assets: every stale count fixed (26->29, 5->8, nine->twelve),
+  brave bullet rewritten for the SSR parser, fixture stats 25/29,
+  API field lists corrected (`info`, `source`, `image_url`),
+  web console lists all categories, `search_sync` semantics fixed.
+
+## (unreleased) new engines: github, arxiv, archive_org
+
+- Three new engines behind three new categories: `github` (`code`,
+  public repo search - code search needs auth and stays out), `arxiv`
+  (`papers`, Atom feed), `archive_org` (`archives`, advancedsearch
+  JSON). 29 engines across 8 categories.
+- New categories reuse wire shapes (code/archives render as web
+  results, papers as book results), so no consumer breaks; MCP gains
+  `code_search` / `papers_search` / `archives_search`, the web console
+  gains three chips, `/health` reports per-category counts.
+- Upstream etiquette built in: arXiv requests throttle to one per 3s
+  process-wide; GitHub quota exhaustion reports rate-limited, never
+  blocked. New `quick-xml` dependency (pure Rust, no system packages).
+- Fixtures captured live for all three; offline parser tests included.
+
+## (unreleased) audit pass: orchestrator, classification, parsers
+
+- Orchestrator: retry successes now count toward `any_ok` (previously an
+  all-fail scrape plus a successful session retry still errored);
+  engine waits and suggestions are deadline-bounded; reports sort by
+  name; semaphore shutdown surfaces as an error instead of panicking;
+  refresh candidacy keys off typed `ErrorKind`, not label strings.
+- Error taxonomy: SSRF redirect refusals keep their classification
+  through the transport (fixed-context recovery); I/O errors keep a
+  static reason instead of discarding it.
+- Dead config wired up: `search.cache_ttl_secs` drives the token caches;
+  `security.block_private_ips` gates the SSRF guard (default on);
+  env overrides apply once and atomically; CLI search/extract now
+  honors the configured domain policy (previously open).
+- Data fixes: brave_images results survive dedup (empty `url` dropped
+  them all); DDG videos prefer the watch page and parse `1.2M` views;
+  google_images shares the google session and tolerates trailing HTML;
+  yandex anti-bot pages report blocked; yahoo drops the suggestions
+  box; qwant/suggest locale and header cleanups.
+- Hardening: PoW solvers and the curl fallback run off async workers;
+  anubis refuses absurd difficulties; browser download streams to disk
+  with a size cap and a strict version check; cookie cache writes are
+  serialized; per-engine settle markers (qwant no longer idles 45s).
+- Docs resynced (CLI/API/MCP/architecture/examples/compose), release
+  workflow cross-compiles per target, `make lint` denies warnings.
+  187 tests green, zero warnings/clippy.
+
 ## (2026-08-25) v0.2.0 review pass
 
 - Dependency PRs resolved: base64 0.23, rmcp 3.1.4, wreq rc.31 (live-

@@ -49,8 +49,23 @@ impl Engine for Yandex {
         util::check_response(self.name(), &resp, util::MediaType::Html)?;
         let body = util::read_body(resp, self.name()).await?;
         let text = String::from_utf8_lossy(&body);
-        Ok(parse_yandex(&text, self.name()))
+        let out = parse_yandex(&text, self.name());
+        // the anti-bot page carries result-like markup: an empty parse
+        // with its markers present is a block, not an honest empty
+        if out.is_empty() && is_anti_bot_text(&text) {
+            return Err(crate::error::Error::blocked(
+                self.name(),
+                crate::error::BlockDetails::BotDetection,
+            ));
+        }
+        Ok(out)
     }
+}
+
+/// Whether a whole SERP body is the anti-bot page (see
+/// [`is_anti_bot_page`]).
+fn is_anti_bot_text(html: &str) -> bool {
+    html.contains("no search results") || html.contains("something went wrong")
 }
 
 /// Parse a Yandex web-search HTML SERP into [`RawResult`] items.

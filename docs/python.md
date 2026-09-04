@@ -23,7 +23,8 @@ phrona.version()                # "0.2.0"
 
 phrona.engines("web")           # {'web': ["duckduckgo","google",...]}
 phrona.engines()                # {'web': [...], 'images': [...], 'news': [...],
-                                    #  'videos': [...], 'books': [...]}
+                                    #  'videos': [...], 'books': [...], 'code': [...],
+                                    #  'papers': [...], 'archives': [...]}
 
 phrona.search("rust", engines=["bing", "brave"], max_results=10)
 # {'query': 'rust', 'category': 'web', 'page': 1, 'total': 8,
@@ -57,11 +58,11 @@ client.engines("news")
 ```
 
 All result values are plain Python dicts/lists/str/int/float - no wrapper
-objects, JSON-serializable by construction. `extract` uses manual
-serialization of `ExtractedPage` (pyo3 class specialization).
+objects, JSON-serializable by construction.
 
 `search` keyword arguments mirror `SearchOptions`; `engines=None` means all
-engines of the category. `profile` accepts "chrome", "firefox", "edge",
-"safari", "opera", "okhttp" (or a numeric profile). `timeout` is seconds.
-Invalid enum values (`safesearch`, `time_range`, `category`, `profile`)
-raise `ValueError`.
+engines of the category. `profile` accepts a browser family ("chrome",
+"firefox", "edge", "safari", "opera", "okhttp", "random") or a versioned
+variant ("chrome149", "firefox139", ...). `timeout` is seconds (clamped to
+1-3600). Invalid enum values (`safesearch`, `time_range`, `category`,
+`profile`) raise `ValueError`.

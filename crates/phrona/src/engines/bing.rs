@@ -42,12 +42,7 @@ impl Engine for Bing {
             ("setlang", lang.clone()),
         ];
         if let Some(t) = &opts.time_range {
-            let days = match t {
-                crate::models::TimeRange::Day => "d",
-                crate::models::TimeRange::Week => "w",
-                crate::models::TimeRange::Month => "m",
-                crate::models::TimeRange::Year => "y",
-            };
+            let days = util::time_param(t);
             let today = chrono::Utc::now().date_naive();
             let (start, end) = match days {
                 "d" => (today, today),

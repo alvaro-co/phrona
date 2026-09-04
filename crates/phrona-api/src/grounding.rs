@@ -25,7 +25,8 @@ pub struct GroundingRequest {
     /// Maximum number of sources to return (clamped to 1..=50).
     pub max_results: Option<usize>,
     #[serde(default)]
-    /// Optional search category (`web`, `images`, `news`, `videos`, `books`).
+    /// Optional search category (`web`, `images`, `news`, `videos`,
+    /// `books`, `code`, `papers`, `archives`).
     pub category: Option<String>,
     #[serde(default)]
     /// Optional time range filter (`day`, `week`, `month`, `year`).
@@ -45,6 +46,9 @@ pub struct GroundingRequest {
     #[serde(default)]
     /// Optional engine-specific filter string.
     pub filters: Option<String>,
+    #[serde(default)]
+    /// Result page (1-based), like `phrona ground --page`.
+    pub page: Option<u32>,
 }
 
 /// GET /v1/grounding?query=... - same feature; auth is header-only.
@@ -56,7 +60,8 @@ pub struct GroundingGetParams {
     /// Maximum number of sources to return (clamped to 1..=50).
     pub max_results: Option<usize>,
     #[serde(default)]
-    /// Optional search category (`web`, `images`, `news`, `videos`, `books`).
+    /// Optional search category (`web`, `images`, `news`, `videos`,
+    /// `books`, `code`, `papers`, `archives`).
     pub category: Option<String>,
     #[serde(default)]
     /// Optional time range filter (`day`, `week`, `month`, `year`).
@@ -76,6 +81,9 @@ pub struct GroundingGetParams {
     #[serde(default)]
     /// Optional engine-specific filter string.
     pub filters: Option<String>,
+    #[serde(default)]
+    /// Result page (1-based).
+    pub page: Option<u32>,
 }
 
 /// The response to a grounding request: an extractive answer plus the
@@ -165,6 +173,7 @@ pub async fn post(
 /// Shared option set between the GET and POST variants (minus auth).
 struct GroundingParams {
     query: String,
+    page: Option<u32>,
     max_results: Option<usize>,
     category: Option<String>,
     time_range: Option<String>,
@@ -178,6 +187,7 @@ struct GroundingParams {
 fn params_from_get(p: &GroundingGetParams) -> GroundingParams {
     GroundingParams {
         query: p.query.clone(),
+        page: p.page,
         max_results: p.max_results,
         category: p.category.clone(),
         time_range: p.time_range.clone(),
@@ -192,6 +202,7 @@ fn params_from_get(p: &GroundingGetParams) -> GroundingParams {
 fn params_from_post(p: &GroundingRequest) -> GroundingParams {
     GroundingParams {
         query: p.query.clone(),
+        page: p.page,
         max_results: p.max_results,
         category: p.category.clone(),
         time_range: p.time_range.clone(),
@@ -205,13 +216,15 @@ fn params_from_post(p: &GroundingRequest) -> GroundingParams {
 
 async fn run(state: &AppState, p: &GroundingParams) -> AppResult<Json<GroundingResponse>> {
     let mut opts = SearchOptions::new(p.query.clone());
+    opts.page = p.page.unwrap_or(1).max(1);
     // aligned with the CLI and web UI ground default
     opts.max_results = p.max_results.unwrap_or(8).clamp(1, 50);
     if let Some(c) = &p.category {
         opts.category = c.parse::<Category>().map_err(|_| {
-            AppError::bad_request(
-                "invalid category, expected one of: web, images, news, videos, books",
-            )
+            AppError::bad_request(format!(
+                "invalid category, expected one of: {}",
+                Category::list_str()
+            ))
         })?;
     }
     if let Some(t) = &p.time_range {

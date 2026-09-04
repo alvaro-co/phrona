@@ -36,19 +36,21 @@ impl Engine for Startpage {
     }
 }
 
-/// Build the shared POST body for the web and images variants.
+/// Build the shared POST body for the web and images variants. Keys are
+/// all static literals, so they stay borrowed instead of pointlessly
+/// allocated per search.
 pub(crate) fn build_form(
     opts: &crate::options::SearchOptions,
     cat: &'static str,
     sc: String,
-) -> Vec<(String, String)> {
+) -> Vec<(&'static str, String)> {
     let (lang, country) = opts.lang_country();
     let qadf = match opts.safesearch {
         SafeSearch::Strict => "heavy",
         SafeSearch::Moderate => "moderate",
         SafeSearch::Off => "none",
     };
-    let mut form: Vec<(&str, String)> = vec![
+    let mut form: Vec<(&'static str, String)> = vec![
         ("query", opts.query.clone()),
         ("cat", cat.into()),
         ("t", "device".into()),
@@ -73,7 +75,7 @@ pub(crate) fn build_form(
     if let Some(t) = &opts.time_range {
         form.push(("with_date", with_date_value(t).into()));
     }
-    form.into_iter().map(|(k, v)| (k.to_string(), v)).collect()
+    form
 }
 
 /// The explicit `with_date` form values accepted by Startpage
@@ -93,7 +95,7 @@ fn with_date_value(t: &TimeRange) -> &'static str {
 pub(crate) async fn post_search(
     ctx: &EngineContext<'_>,
     engine: &'static str,
-    form: &[(String, String)],
+    form: &[(&'static str, String)],
 ) -> Result<String> {
     let url = format!("{ORIGIN}/sp/search");
     let mut headers = wreq::header::HeaderMap::new();
@@ -105,7 +107,7 @@ pub(crate) async fn post_search(
         wreq::header::ORIGIN,
         wreq::header::HeaderValue::from_static(ORIGIN),
     );
-    let body = parse::form_encode(form.iter().map(|(k, v)| (k.as_str(), v.as_str())));
+    let body = parse::form_encode(form.iter().map(|(k, v)| (*k, v.as_str())));
     let resp = ctx
         .client
         .post_form_with_headers(&url, &body, &headers)

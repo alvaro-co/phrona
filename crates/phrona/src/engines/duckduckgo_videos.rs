@@ -62,10 +62,13 @@ pub fn parse_ddg_videos(json: &serde_json::Value, engine: &str) -> Vec<RawResult
         return out;
     };
     for (i, item) in results.iter().enumerate() {
+        // canonical watch page first: `embed_url` is the player frame,
+        // worse for display and dedup
         let url = item
-            .get("embed_url")
+            .get("content")
             .and_then(|u| u.as_str())
             .or_else(|| item.get("url").and_then(|u| u.as_str()))
+            .or_else(|| item.get("embed_url").and_then(|u| u.as_str()))
             .unwrap_or("");
         let title = item.get("title").and_then(|t| t.as_str()).unwrap_or("");
         if url.is_empty() || title.is_empty() {
@@ -79,7 +82,7 @@ pub fn parse_ddg_videos(json: &serde_json::Value, engine: &str) -> Vec<RawResult
             .get("statistics")
             .and_then(|s| s.get("viewCount"))
             .and_then(|v| v.as_str())
-            .and_then(|v| v.parse().ok())
+            .map(crate::engines::util::parse_count)
             .unwrap_or(0);
         let thumbnail = item
             .get("images")

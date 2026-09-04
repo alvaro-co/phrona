@@ -7,7 +7,7 @@
 //! containers), the assets embedded at compile time via `include_str!` are
 //! served instead — UI routes never 404.
 
-use axum::body::Body;
+use axum::body::{Body, Bytes};
 use axum::http::{StatusCode, header};
 use axum::response::Response;
 
@@ -39,19 +39,21 @@ fn embedded_asset(name: &str) -> Option<&'static [u8]> {
     }
 }
 
-fn ok_response(body: Vec<u8>, mime: &'static str) -> Response {
+fn ok_response(body: Body, mime: &'static str) -> Response {
     Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, mime)
-        .body(Body::from(body))
+        .body(body)
         .unwrap_or_else(|_| Response::new(Body::empty()))
 }
 
 fn serve(name: &str, mime: &'static str) -> Response {
     match std::fs::read(frontend_dir().join(name)) {
-        Ok(body) => ok_response(body, mime),
+        Ok(body) => ok_response(Body::from(body), mime),
+        // embedded assets are `&'static [u8]`: served without copying,
+        // instead of cloning them into a fresh Vec per request
         Err(_) => match embedded_asset(name) {
-            Some(asset) => ok_response(asset.to_vec(), mime),
+            Some(asset) => ok_response(Body::from(Bytes::from_static(asset)), mime),
             None => Response::builder()
                 .status(StatusCode::NOT_FOUND)
                 .body(Body::from("not found"))
@@ -70,9 +72,10 @@ pub async fn index(req: axum::extract::Request) -> Response {
         "app.js" => serve("app.js", "text/javascript; charset=utf-8"),
         // browsers hit this blindly; answer with a real icon instead of
         // falling through to the SPA shell
-        "favicon.ico" | "favicon.svg" => {
-            ok_response(FAVICON_SVG.as_bytes().to_vec(), "image/svg+xml")
-        }
+        "favicon.ico" | "favicon.svg" => ok_response(
+            Body::from(Bytes::from_static(FAVICON_SVG.as_bytes())),
+            "image/svg+xml",
+        ),
         _ => serve("index.html", "text/html; charset=utf-8"),
     }
 }

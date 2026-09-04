@@ -70,9 +70,10 @@ pub fn parse_brave(html: &str, engine: &str) -> Vec<RawResult> {
     let doc = parse::parse_html(html);
     let mut out = Vec::new();
     let sel = scraper::Selector::parse("div[data-type=\"web\"]").unwrap();
+    // parsed once per page, not once per result
+    let a_sel = scraper::Selector::parse("a[href]").unwrap();
     let mut pos = 0u32;
     for node in doc.select(&sel) {
-        let a_sel = scraper::Selector::parse("a[href]").unwrap();
         let mut url = String::new();
         for a in node.select(&a_sel) {
             let href = a.value().attr("href").unwrap_or("");

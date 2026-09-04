@@ -11,6 +11,9 @@ pub fn dedup_key(url: &str) -> String {
     };
     let scheme = u.scheme().to_string();
     let host = u.host_str().unwrap_or("").to_lowercase();
+    // keep explicit ports (`port()` is already `None` for scheme
+    // defaults): example.com:8080/a is not example.com/a
+    let port = u.port().map(|p| format!(":{p}")).unwrap_or_default();
     let mut path = u.path().trim_end_matches('/').to_string();
     if path.is_empty() {
         path = "/".to_string();
@@ -41,7 +44,7 @@ pub fn dedup_key(url: &str) -> String {
         .map(|(k, v)| (k.to_lowercase(), v.into_owned()))
         .filter(|(k, _)| !strip.contains(&k.as_str()))
         .collect();
-    let mut key = format!("{scheme}://{host}{path}");
+    let mut key = format!("{scheme}://{host}{port}{path}");
     if !query.is_empty() {
         let mut q: Vec<String> = query.iter().map(|(k, v)| format!("{k}={v}")).collect();
         q.sort();
@@ -109,6 +112,19 @@ mod tests {
             engine: engine.into(),
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn dedup_key_keeps_explicit_ports() {
+        assert_eq!(
+            dedup_key("https://example.com:8443/a"),
+            "https://example.com:8443/a"
+        );
+        // scheme-default ports normalize away
+        assert_eq!(
+            dedup_key("https://example.com:443/a"),
+            "https://example.com/a"
+        );
     }
 
     #[test]

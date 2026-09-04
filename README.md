@@ -1,7 +1,7 @@
 # Phrona
 
-High-performance metasearch engine library written in Rust. Queries 26 search
-engines across 5 categories in parallel, impersonates real browsers over
+High-performance metasearch engine library written in Rust. Queries 29 search
+engines across 8 categories in parallel, impersonates real browsers over
 HTTP/2 (wreq), merges, deduplicates and ranks results locally, and exposes
 the same engine to Rust, Python, a REST API, an MCP server for AI agents and
 a web frontend.
@@ -104,8 +104,9 @@ cargo run -p phrona-cli -- serve        # also serves MCP over TCP 8081
 ```
 
 Point your MCP client (Claude Desktop, claude-code, Cursor...) at the
-`phrona-mcp` binary. Nine tools: `web_search`, `image_search`,
-`news_search`, `video_search`, `book_search`, `suggest`, `fetch_page`,
+`phrona-mcp` binary. Twelve tools: `web_search`, `image_search`,
+`news_search`, `video_search`, `book_search`, `code_search`,
+`papers_search`, `archives_search`, `suggest`, `fetch_page`,
 `search_grounded`, `list_engines`.
 
 ## Quick start (web)
@@ -121,8 +122,8 @@ on reload - no rebuild.
 
 ## Features
 
-- 26 engines, 5 categories (web, images, news, videos, books), 1 suggestion
-  source family and page extraction (AI grounding).
+- 29 engines, 8 categories (web, images, news, videos, books, code, papers, archives), 7 suggestion
+  sources and page extraction (AI grounding).
 - Impersonated HTTP/2 with TLS fingerprint spoofing via wreq profiles
   (Chrome 100-149, Firefox 139-148, Safari 26, Edge 148, Opera 131, OkHttp).
 - Search merging: cross-engine dedup (tracking parameters stripped), ranking
@@ -139,7 +140,7 @@ on reload - no rebuild.
   category, safesearch, region, language, time range, filters, page,
   JSON view, per-engine report) and a Tools tab that runs every CLI
   capability in the browser (suggest, extract, ground, engines, test).
-- Fixture-based parser tests: 22 of 26 captured pages are
+- Fixture-based parser tests: 25 of 29 captured pages are
   verified-parseable live captures (see `crates/phrona/tests/fixtures/`);
   the suite is fully network-independent.
 - Upstream drift monitor: `scripts/watch_upstream.sh` + the
@@ -175,7 +176,7 @@ CI runs:
 ```bash
 cargo fmt --all --check           # or: make fmt-check
 cargo clippy --workspace --all-targets -- -D warnings   # or: make lint
-cargo test --workspace            # 77 offline tests incl. 26 fixtures, ~1 s  (make test)
+cargo test --workspace            # 195 offline tests incl. 29 fixtures, ~15 s  (make test)
 make check                        # fmt-check + lint + test in one
 
 cargo build --workspace           # or: make build

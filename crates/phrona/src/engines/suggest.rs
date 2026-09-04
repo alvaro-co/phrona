@@ -78,13 +78,12 @@ async fn fetch(
             [("type", "list"), ("q", query), ("kl", region)],
         ),
         SuggestSource::Google => {
-            let (lang, _) = region
-                .split_once('-')
-                .map(|(l, _)| (l.to_string(), ()))
-                .unwrap_or((region.to_string(), ()));
+            // regions are `country-lang` (`us-en`): the language is the
+            // part AFTER the dash
+            let lang = region.split_once('-').map(|(_, l)| l).unwrap_or(region);
             parse::with_query(
                 "https://www.google.com/complete/search",
-                [("q", query), ("client", "gws-wiz"), ("hl", lang.as_str())],
+                [("q", query), ("client", "gws-wiz"), ("hl", lang)],
             )
         }
         SuggestSource::Bing => {
@@ -134,9 +133,7 @@ async fn fetch(
         &resp,
         crate::engines::util::MediaType::Any,
     )?;
-    Ok(crate::engines::util::read_body(resp, source.name())
-        .await?
-        .to_vec())
+    crate::engines::util::read_body(resp, source.name()).await
 }
 
 /// Qwant API locale for a `lang-country` region (`us-en`/`en-us` -> `en_US`).
@@ -170,32 +167,22 @@ pub fn wikipedia_lang(region: &str) -> String {
     let second = it.next();
     // `country-language` convention puts the language second
     // (`us-en`); BCP47-style input (`ja-jp`) puts it first - try both.
+    // The trailing `en` can never miss (`EDITIONS` always contains it),
+    // but a safe fallback beats an `unreachable!` if the table is ever
+    // edited without it.
     let candidates = [second, first, Some("en")];
     for c in candidates.into_iter().flatten() {
         if EDITIONS.contains(&c) {
             return c.to_string();
         }
     }
-    unreachable!("'en' is always in EDITIONS")
+    "en".to_string()
 }
 
 /// Parse an autocomplete response body for a source. Pure function so
 /// every source has an offline unit test.
 pub fn parse(source: SuggestSource, body: &[u8]) -> Result<Vec<String>> {
     match source {
-        SuggestSource::DuckDuckGo => {
-            let json: serde_json::Value = serde_json::from_slice(body)
-                .map_err(|_| Error::schema(source.name(), "invalid JSON response"))?;
-            Ok(json
-                .get(1)
-                .and_then(|v| v.as_array())
-                .map(|a| {
-                    a.iter()
-                        .filter_map(|s| s.as_str().map(String::from))
-                        .collect()
-                })
-                .unwrap_or_default())
-        }
         SuggestSource::Google => {
             let text = String::from_utf8_lossy(body);
             let start = text
@@ -207,15 +194,16 @@ pub fn parse(source: SuggestSource, body: &[u8]) -> Result<Vec<String>> {
             let json: serde_json::Value = serde_json::from_str(&text[start..=end])
                 .map_err(|_| Error::schema(source.name(), "invalid JSON response"))?;
             let mut out = Vec::new();
+            // one static selector for the whole response, not one per item
+            static BODY: std::sync::OnceLock<scraper::Selector> = std::sync::OnceLock::new();
+            let sel = BODY.get_or_init(|| scraper::Selector::parse("body").unwrap());
             if let Some(items) = json.get(0).and_then(|v| v.as_array()) {
                 for item in items {
                     if let Some(html) = item.get(0).and_then(|v| v.as_str()) {
                         // the suggestion may carry <b> emphasis; take the full
                         // text so prefixes are not lost
                         let doc = parse::parse_html(html);
-                        let sel =
-                            scraper::Selector::parse("body").unwrap_or_else(|_| unreachable!());
-                        if let Some(b) = doc.select(&sel).next() {
+                        if let Some(b) = doc.select(sel).next() {
                             out.push(parse::text_of(&b));
                         } else {
                             out.push(parse::collapse(html));
@@ -242,19 +230,6 @@ pub fn parse(source: SuggestSource, body: &[u8]) -> Result<Vec<String>> {
                 })
                 .unwrap_or_default())
         }
-        SuggestSource::Brave | SuggestSource::Startpage => {
-            let json: serde_json::Value = serde_json::from_slice(body)
-                .map_err(|_| Error::schema(source.name(), "invalid JSON response"))?;
-            Ok(json
-                .get(1)
-                .and_then(|v| v.as_array())
-                .map(|a| {
-                    a.iter()
-                        .filter_map(|s| s.as_str().map(String::from))
-                        .collect()
-                })
-                .unwrap_or_default())
-        }
         SuggestSource::Qwant => {
             let json: serde_json::Value = serde_json::from_slice(body)
                 .map_err(|_| Error::schema(source.name(), "invalid JSON response"))?;
@@ -268,7 +243,10 @@ pub fn parse(source: SuggestSource, body: &[u8]) -> Result<Vec<String>> {
                 })
                 .unwrap_or_default())
         }
-        SuggestSource::Wikipedia => {
+        // DuckDuckGo, Brave, Startpage and Wikipedia all answer the same
+        // opensearch shape (`[query, [suggestions...], ...]`); a shared
+        // arm also keeps future sources working if they follow it.
+        _ => {
             let json: serde_json::Value = serde_json::from_slice(body)
                 .map_err(|_| Error::schema(source.name(), "invalid JSON response"))?;
             Ok(json

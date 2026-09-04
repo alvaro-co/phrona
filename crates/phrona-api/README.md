@@ -15,11 +15,12 @@ curl "localhost:8080/v1/search?q=rust&max_results=5"
 
 ## Endpoints
 
-- `GET /v1/search` — metasearch (Tavily-compatible parameters)
+- `GET /v1/search` — metasearch (native parameters)
+- `POST /search`, `POST /v1/tavily` — Tavily-compatible search
 - `GET /v1/suggest` — suggestions
 - `GET /v1/extract` — page extraction / AI grounding
 - `GET /v1/engines` / `GET /v1/test` — engine listing and availability probing
-- `GET /v1/health` — health check
+- `GET /health` — health check
 - `GET /` — the web frontend (served from `assets/`, editable without rebuild)
 
 See the [API reference](https://github.com/alvaro-co/phrona/blob/main/docs/api.md)

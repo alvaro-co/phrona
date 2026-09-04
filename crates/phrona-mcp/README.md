@@ -6,7 +6,8 @@ Works over stdio (JSON-RPC) and TCP, using rmcp.
 
 ## Tools
 
-- `web_search`, `image_search`, `news_search`, `video_search`, `book_search`
+- `web_search`, `image_search`, `news_search`, `video_search`, `book_search`,
+  `code_search`, `papers_search`, `archives_search`
 - `suggest`
 - `fetch_page` — page extraction
 - `search_grounded` — grounded search for RAG

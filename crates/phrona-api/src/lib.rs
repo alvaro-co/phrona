@@ -290,7 +290,8 @@ fn build_options(p: &SearchParams, max_results_limit: usize) -> AppResult<Search
     if let Some(c) = &p.category {
         opts.category = c.parse::<Category>().map_err(|_| {
             AppError::bad_request(format!(
-                "invalid category '{c}', expected one of: web, images, news, videos, books"
+                "invalid category '{c}', expected one of: {}",
+                Category::list_str()
             ))
         })?;
     }
@@ -313,7 +314,8 @@ fn build_options(p: &SearchParams, max_results_limit: usize) -> AppResult<Search
         opts.page = page.max(1);
     }
     if let Some(m) = p.max_results {
-        opts.max_results = m.clamp(1, max_results_limit);
+        // `max(1)`: a zero operator limit must clamp, not panic in `clamp`
+        opts.max_results = m.clamp(1, max_results_limit.max(1));
     }
     if let Some(s) = &p.safesearch {
         opts.safesearch = s.parse::<phrona::SafeSearch>().map_err(|_| {
@@ -346,9 +348,14 @@ fn header_key(headers: &HeaderMap) -> Option<String> {
 
 /// Resolve the API key for endpoints that accept credentials in the JSON
 /// body (e.g. the Tavily-compatible routes): the body key wins, headers are
-/// the fallback. Query strings are never consulted.
+/// the fallback. Query strings are never consulted. An explicitly empty
+/// body key counts as absent (SDKs often serialize unset keys as `""`),
+/// so it never shadows a valid header.
 pub(crate) fn auth_key(headers: &HeaderMap, body_key: Option<&str>) -> Option<String> {
-    body_key.map(str::to_string).or_else(|| header_key(headers))
+    body_key
+        .filter(|k| !k.is_empty())
+        .map(str::to_string)
+        .or_else(|| header_key(headers))
 }
 
 /// Header-only auth for GET endpoints. Query-string `api_key` parameters are
@@ -427,16 +434,17 @@ async fn rate_limit(
 }
 
 async fn health(State(state): State<Arc<AppState>>) -> Json<Value> {
-    let web = engine::engines_for(Category::Web).len();
-    let images = engine::engines_for(Category::Images).len();
-    let news = engine::engines_for(Category::News).len();
-    let videos = engine::engines_for(Category::Videos).len();
-    let books = engine::engines_for(Category::Books).len();
+    // derived from the registry, never hand-counted: a new category shows
+    // up here without a code change
+    let engines: serde_json::Map<String, Value> = Category::ALL
+        .iter()
+        .map(|c| (c.as_str().to_string(), json!(engine::engines_for(*c).len())))
+        .collect();
     Json(json!({
         "status": "ok",
         "version": phrona::version(),
         "uptime_s": state.started.elapsed().as_secs(),
-        "engines": {"web": web, "images": images, "news": news, "videos": videos, "books": books},
+        "engines": engines,
         "auth": state.api_key.is_some(),
     }))
 }
@@ -449,9 +457,10 @@ struct EnginesParams {
 async fn engines(JsonQuery(p): JsonQuery<EnginesParams>) -> AppResult<Json<Value>> {
     let cats: Vec<Category> = match p.category.as_deref() {
         Some(c) => vec![c.parse::<Category>().map_err(|_| {
-            AppError::bad_request(
-                "invalid category, expected one of: web, images, news, videos, books",
-            )
+            AppError::bad_request(format!(
+                "invalid category, expected one of: {}",
+                Category::list_str()
+            ))
         })?],
         None => Category::ALL.to_vec(),
     };
@@ -620,11 +629,6 @@ pub async fn serve(addr: SocketAddr, cfg: PhronaConfig) -> anyhow::Result<()> {
         .with_graceful_shutdown(shutdown_signal())
         .await?;
     Ok(())
-}
-
-/// Default bind address when none is configured.
-pub fn default_addr() -> SocketAddr {
-    "127.0.0.1:8080".parse().expect("static addr")
 }
 
 #[cfg(test)]
@@ -837,7 +841,9 @@ mod tests {
             auth_key(&headers, Some("body-key")).as_deref(),
             Some("body-key")
         );
-        assert_eq!(auth_key(&headers, Some("")), Some(String::new()));
+        assert_eq!(auth_key(&headers, Some("")), Some("header-key".into()));
+        // empty body with no header at all: absent, not an empty secret
+        assert_eq!(auth_key(&HeaderMap::new(), Some("")), None);
         let mut bearer = HeaderMap::new();
         bearer.insert("authorization", "Bearer b-key".parse().unwrap());
         assert_eq!(auth_key(&bearer, None).as_deref(), Some("b-key"));

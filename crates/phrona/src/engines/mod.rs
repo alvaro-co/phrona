@@ -3,6 +3,8 @@
 pub mod altcha;
 pub mod annas_archive;
 pub mod anubis;
+pub mod archive_org;
+pub mod arxiv;
 pub mod bing;
 pub mod bing_images;
 pub mod bing_news;
@@ -15,6 +17,7 @@ pub mod duckduckgo;
 pub mod duckduckgo_images;
 pub mod duckduckgo_news;
 pub mod duckduckgo_videos;
+pub mod github;
 pub mod google;
 pub mod google_images;
 pub mod grokipedia;

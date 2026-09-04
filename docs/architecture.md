@@ -12,7 +12,7 @@ Python or the web UI.
   phrona-api   phrona-mcp  phrona-python  phrona-cli
    (axum REST)      (rmcp MCP)      (pyo3 bindings)   (phrona: all-in-one)
         |              |                |                |
-      frontend/    stdio server      wheel (uv)     + embedds api+mcp
+      assets/      stdio server      wheel (uv)     + embeds api+mcp
       (static SPA)  + tcp server
 ```
 
@@ -20,11 +20,11 @@ Python or the web UI.
 
 - `phrona` depends on nothing from the workspace (wreq, serde,
   scraper, tokio, ... only).
-- `phrona-api` depends on `phrona`; exposes `router(api_key)` and
-  `serve(addr, api_key)`. Its binary is a thin
+- `phrona-api` depends on `phrona`; exposes `router(PhronaConfig)` and
+  `serve(addr, cfg)`. Its binary is a thin
   wrapper (`cargo run -p phrona-api`).
-- `phrona-mcp` depends on `phrona`; exposes `run_stdio()` and
-  `serve_tcp(listener)`. Its binary is a thin wrapper.
+- `phrona-mcp` depends on `phrona`; exposes `run_stdio(&cfg)` and
+  `serve_tcp(listener, cfg, shutdown)`. Its binary is a thin wrapper.
 - `phrona-cli` depends on all three above and composes them: search
   etc. use the core directly, `phrona serve` runs the REST router and the
   MCP TCP listener in one tokio runtime, `phrona mcp` runs the stdio server.
@@ -41,7 +41,7 @@ every interface is a different door into the same code.
 | Module | Responsibility |
 | --- | --- |
 | `client` | wreq wrapper: impersonation profiles, cookie jar, redirects, optional proxy, timeouts |
-| `engines` | 26 engine modules + 7 suggestion sources, each stateless and testable via fixtures |
+| `engines` | 29 engine modules + solvers (`altcha`, `anubis`), `suggest` (7 sources) and shared `util`, each stateless and testable via fixtures |
 | `engine` | `Engine` trait, per-search context, shared token caches (DDG vqd, Startpage sc) |
 | `dedup` | URL normalization, tracking-param stripping, cross-engine grouping |
 | `rank` | agreement + position + text-match scoring, wikipedia bonus |

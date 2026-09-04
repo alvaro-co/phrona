@@ -97,7 +97,18 @@ pub fn print_item(position: usize, item: &ResultItem) {
             position,
             &b.title,
             &b.url,
-            &format!("{} | {}{}", b.author, b.publisher, b.info),
+            &format!(
+                "{} | {}{}",
+                b.author,
+                b.publisher,
+                if b.info.is_empty() {
+                    String::new()
+                } else if b.publisher.is_empty() {
+                    b.info.clone()
+                } else {
+                    format!(" {}", b.info)
+                }
+            ),
         ),
     }
 }

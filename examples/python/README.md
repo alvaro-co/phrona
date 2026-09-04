@@ -4,12 +4,12 @@ Two runnable scripts demonstrating the `phrona` Python package.
 
 ## Prerequisites
 
-The bindings require CPython 3.9-3.13 (3.14 crashes in pyo3 0.24).
+The bindings require CPython 3.9-3.14.
 
 ```bash
 uv build                              # from the repo root
 uv venv --python 3.12 /tmp/msenv
-uv pip install --python /tmp/msenv/bin/python dist/phrona-0.1.0-*.whl
+uv pip install --python /tmp/msenv/bin/python dist/phrona-0.2.0-*.whl
 ```
 
 ## Run

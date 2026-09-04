@@ -128,7 +128,7 @@ impl Challenge {
 /// `FormData(form)` submission.
 pub fn verify_body(payload_b64: &str) -> (String, String) {
     let boundary = format!(
-        "----webriefaltcha{}",
+        "----phrona-altcha{}",
         crate::engines::util::random_token(16)
     );
     let body = format!(

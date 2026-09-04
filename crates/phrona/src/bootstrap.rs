@@ -37,6 +37,13 @@ pub const SEEDS: &[(&str, &str, &str)] = &[
     ("qwant", "https://www.qwant.com/?q=test", "datadome"),
 ];
 
+/// Bound for one headless harvest attempt (spawn, navigate, clearance
+/// polling, settle). The orchestrator enforces it per engine so a stuck
+/// browser — or a slow first-time browser download — degrades to a normal
+/// engine error instead of hanging the search. Attempts still count toward
+/// the refresh spacing (see `SearchClient::search`).
+pub const HARVEST_TIMEOUT: Duration = Duration::from_secs(180);
+
 /// Domain substrings selecting which harvested cookies belong to an engine.
 fn domains_for(engine: &str) -> &'static [&'static str] {
     match engine {
@@ -61,6 +68,16 @@ pub fn clearance_for(engine: &str) -> Option<&'static str> {
         .iter()
         .find(|(name, _, _)| *name == engine)
         .map(|(_, _, c)| *c)
+}
+
+/// URL substring proving the seed page settled onto real results rather
+/// than an interstitial. The generic `/search` marker never matches
+/// qwant's `/?q=` results URL, so it is per-engine.
+fn settle_marker(engine: &str) -> &'static str {
+    match engine {
+        "qwant" => "?q=",
+        _ => "/search",
+    }
 }
 
 /// Locate a system Chromium-family browser binary, or download the
@@ -137,6 +154,21 @@ const CFT_LATEST: &str =
     "https://googlechromelabs.github.io/chrome-for-testing/LATEST_RELEASE_STABLE";
 const CFT_BASE: &str = "https://storage.googleapis.com/chrome-for-testing-public";
 
+/// Whether a chrome-for-testing version string is plausible
+/// (`"152.0.7977.64"`): 3-4 dot-separated numeric parts. The endpoint is
+/// trusted, but a captive portal could return anything.
+fn valid_cft_version(v: &str) -> bool {
+    let parts: Vec<&str> = v.split('.').collect();
+    (3..=4).contains(&parts.len())
+        && parts
+            .iter()
+            .all(|p| !p.is_empty() && p.len() <= 6 && p.bytes().all(|b| b.is_ascii_digit()))
+}
+
+/// Upper bound for the streamed browser download; aborts a runaway
+/// response instead of filling the disk.
+const MAX_SHELL_ZIP: u64 = 300 * 1024 * 1024;
+
 /// Root directory for the downloaded browser (`$PHRONA_CACHE_DIR` override).
 fn browser_cache_root() -> Option<PathBuf> {
     if let Ok(x) = std::env::var("PHRONA_CACHE_DIR") {
@@ -149,6 +181,65 @@ fn browser_cache_root() -> Option<PathBuf> {
     Some(xdg.join("phrona").join("browser"))
 }
 
+/// Drive a future to completion on a tiny current-thread runtime.
+/// `harvest_blocking` is documented for blocking threads (via
+/// `spawn_blocking`), but a library user on a current-thread runtime would
+/// nest runtimes and panic ("Cannot start a runtime from within a
+/// runtime"). When a Tokio context is already active, the work moves to a
+/// fresh OS thread first, so the download path works from any caller.
+fn block_on_isolated<F, T>(fut: F, what: &'static str) -> Result<T>
+where
+    F: std::future::Future<Output = Result<T>> + Send,
+    T: Send,
+{
+    if tokio::runtime::Handle::try_current().is_err() {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|_| Error::internal("bootstrap", "runtime"))?;
+        return rt.block_on(fut);
+    }
+    std::thread::scope(|s| {
+        s.spawn(|| {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .map_err(|_| Error::internal("bootstrap", "runtime"))?;
+            rt.block_on(fut)
+        })
+        .join()
+        .map_err(|_| Error::internal("bootstrap", what))?
+    })
+}
+
+/// A previously downloaded `chrome-headless-shell` binary, newest version
+/// first. Directory names embed the version
+/// (`chrome-headless-shell-<version>-linux64`); versions compare
+/// numerically per dot-separated part so `99.x` never beats `152.x`.
+fn find_cached_shell() -> Option<PathBuf> {
+    fn version_key(dir: &std::ffi::OsStr) -> Option<(Vec<u64>, PathBuf)> {
+        let name = dir.to_str()?;
+        let v = name
+            .strip_prefix("chrome-headless-shell-")?
+            .strip_suffix("-linux64")?;
+        let parts: Option<Vec<u64>> = v.split('.').map(|p| p.parse().ok()).collect();
+        Some((parts?, PathBuf::from(name)))
+    }
+    let root = browser_cache_root()?;
+    std::fs::read_dir(root)
+        .ok()?
+        .filter_map(|e| {
+            let dir = e.ok()?.path();
+            let (key, _) = version_key(dir.file_name()?)?;
+            let bin = dir
+                .join("chrome-headless-shell-linux64")
+                .join("chrome-headless-shell");
+            bin.is_file().then_some((key, bin))
+        })
+        .max_by(|(a, _), (b, _)| a.cmp(b))
+        .map(|(_, bin)| bin)
+}
+
 /// Download (once) and return the path of the official
 /// `chrome-headless-shell` binary for this platform. Linux only; other
 /// platforms rely on a system browser.
@@ -159,26 +250,29 @@ fn downloaded_shell() -> Result<PathBuf> {
             "auto-download only implemented for linux",
         ));
     }
-    // sync context: run the async fetch on a tiny current-thread runtime
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|_| Error::internal("bootstrap", "runtime"))?;
-    let version: String = rt.block_on(async {
-        let client = wreq::Client::builder()
-            .build()
-            .map_err(|_| Error::network("bootstrap"))?;
-        let txt = client
-            .get(CFT_LATEST)
-            .send()
-            .await
-            .map_err(|_| Error::network(CFT_LATEST))?
-            .text()
-            .await
-            .map_err(|_| Error::network(CFT_LATEST))?;
-        Ok::<String, Error>(txt.trim().to_string())
-    })?;
-    if version.is_empty() || !version.contains('.') {
+    // a previous run's download wins over the network: no version fetch,
+    // no failure mode when offline with a usable binary on disk
+    if let Some(cached) = find_cached_shell() {
+        return Ok(cached);
+    }
+    let version: String = block_on_isolated(
+        async {
+            let client = wreq::Client::builder()
+                .build()
+                .map_err(|_| Error::network("bootstrap"))?;
+            let txt = client
+                .get(CFT_LATEST)
+                .send()
+                .await
+                .map_err(|_| Error::network(CFT_LATEST))?
+                .text()
+                .await
+                .map_err(|_| Error::network(CFT_LATEST))?;
+            Ok::<String, Error>(txt.trim().to_string())
+        },
+        "version fetch",
+    )?;
+    if !valid_cft_version(&version) {
         return Err(Error::schema("bootstrap", "bad version response"));
     }
     let root = browser_cache_root().ok_or_else(|| Error::internal("bootstrap", "no cache dir"))?;
@@ -194,29 +288,43 @@ fn downloaded_shell() -> Result<PathBuf> {
     trace(&format!(
         "downloading chrome-headless-shell {version} (~95MB)"
     ));
-    let bytes: Vec<u8> = {
-        let owned_url = url.clone();
-        rt.block_on(async move {
-            let client = wreq::Client::builder()
-                .build()
-                .map_err(|_| Error::network("bootstrap"))?;
-            let resp = client
-                .get(owned_url)
-                .send()
-                .await
-                .map_err(|_| Error::network("cft-download"))?;
-            if !resp.status().is_success() {
-                return Err(Error::unavailable("cft-download", resp.status().as_u16()));
-            }
-            let buf = resp
-                .bytes()
-                .await
-                .map_err(|_| Error::network("cft-download"))?;
-            Ok::<Vec<u8>, Error>(buf.to_vec())
-        })?
-    };
     let zip_path = dir.join("shell.zip");
-    std::fs::write(&zip_path, &bytes).map_err(|_| Error::internal("bootstrap", "zip write"))?;
+    // stream to disk: the ~95MB zip must not sit in RAM twice (response
+    // buffer plus the copy handed to the seed-file write)
+    {
+        use futures::StreamExt;
+        let owned_url = url.clone();
+        let mut file = std::fs::File::create(&zip_path)
+            .map_err(|_| Error::internal("bootstrap", "zip create"))?;
+        let mut written: u64 = 0;
+        block_on_isolated(
+            async move {
+                let client = wreq::Client::builder()
+                    .build()
+                    .map_err(|_| Error::network("bootstrap"))?;
+                let resp = client
+                    .get(owned_url)
+                    .send()
+                    .await
+                    .map_err(|_| Error::network("cft-download"))?;
+                if !resp.status().is_success() {
+                    return Err(Error::unavailable("cft-download", resp.status().as_u16()));
+                }
+                let mut stream = resp.bytes_stream();
+                while let Some(chunk) = stream.next().await {
+                    let chunk = chunk.map_err(|_| Error::network("cft-download"))?;
+                    written += chunk.len() as u64;
+                    if written > MAX_SHELL_ZIP {
+                        return Err(Error::schema("bootstrap", "download too large"));
+                    }
+                    file.write_all(&chunk)
+                        .map_err(|_| Error::internal("bootstrap", "zip write"))?;
+                }
+                Ok::<(), Error>(())
+            },
+            "browser download",
+        )?;
+    }
     {
         let file =
             std::fs::File::open(&zip_path).map_err(|_| Error::internal("bootstrap", "zip open"))?;
@@ -239,16 +347,30 @@ fn downloaded_shell() -> Result<PathBuf> {
 }
 
 /// Minimal `which`: scan PATH for an executable name.
-#[allow(dead_code)]
 fn which(name: &str) -> std::result::Result<String, ()> {
     let path = std::env::var_os("PATH").ok_or(())?;
     for dir in std::env::split_paths(&path) {
         let p = dir.join(name);
-        if p.is_file() {
+        // a non-executable file shadowing a real binary must not win:
+        // the spawn would fail later with a confusing error
+        if p.is_file() && is_executable(&p) {
             return Ok(p.to_string_lossy().into_owned());
         }
     }
     Err(())
+}
+
+#[cfg(unix)]
+fn is_executable(p: &std::path::Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    p.metadata()
+        .map(|m| m.permissions().mode() & 0o111 != 0)
+        .unwrap_or(false)
+}
+
+#[cfg(not(unix))]
+fn is_executable(_p: &std::path::Path) -> bool {
+    true
 }
 
 fn trace(stage: &str) {
@@ -270,16 +392,12 @@ pub fn cache_path() -> Option<PathBuf> {
         return Some(PathBuf::from(p));
     }
     let dir = match std::env::var("PHRONA_CONFIG_PATH") {
-        Ok(p) => PathBuf::from(p).parent().map(|d| d.to_path_buf()),
-        Err(_) => std::fs::canonicalize(".")
-            .ok()
-            .map(|_| std::path::PathBuf::from(".")),
+        // mirror `PhronaConfig::load`: an empty path means "unset"
+        Ok(p) if !p.is_empty() => PathBuf::from(p).parent().map(|d| d.to_path_buf()),
+        Ok(_) => std::env::current_dir().ok(),
+        Err(_) => std::env::current_dir().ok(),
     };
     dir.map(|d| d.join("phrona.cookies.json"))
-}
-
-fn cache_entry_key(engine: &str) -> String {
-    engine.to_string()
 }
 
 /// Load a previously stored cookie header for `engine` from the local
@@ -288,7 +406,7 @@ pub fn load_cached(engine: &str) -> Option<(String, u64)> {
     let path = cache_path()?;
     let text = std::fs::read_to_string(path).ok()?;
     let v: serde_json::Value = serde_json::from_str(&text).ok()?;
-    let e = v.get(cache_entry_key(engine))?;
+    let e = v.get(engine)?;
     let header = e.get("cookies")?.as_str()?.to_string();
     let at = e.get("updated_at").and_then(|t| t.as_u64())?;
     if header.is_empty() {
@@ -297,9 +415,14 @@ pub fn load_cached(engine: &str) -> Option<(String, u64)> {
     Some((header, at))
 }
 
+/// Serializes concurrent `store_cached` calls in-process; the final
+/// `rename` is atomic, so readers never see a torn file.
+static CACHE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// Store a cookie header for `engine` in the local cache (best-effort).
 pub fn store_cached(engine: &str, header: &str) {
     let Some(path) = cache_path() else { return };
+    let _guard = CACHE_LOCK.lock();
     let mut root: serde_json::Value = std::fs::read_to_string(&path)
         .ok()
         .and_then(|t| serde_json::from_str(&t).ok())
@@ -311,14 +434,14 @@ pub fn store_cached(engine: &str, header: &str) {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    root[cache_entry_key(engine)] = serde_json::json!({
+    root[engine] = serde_json::json!({
         "cookies": header,
         "updated_at": now,
     });
     if let Ok(txt) = serde_json::to_string_pretty(&root) {
         let tmp = path.with_extension("tmp");
         if std::fs::write(&tmp, txt).is_ok() {
-            let _ = std::fs::rename(&tmp, &path); // atomic-enough locally
+            let _ = std::fs::rename(&tmp, &path);
         }
     }
 }
@@ -340,7 +463,6 @@ const SESSION_UA: &str = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KH
 
 struct BrowserProc {
     child: Child,
-    #[allow(dead_code)]
     profile_dir: PathBuf,
 }
 
@@ -390,10 +512,10 @@ fn spawn_browser(engine: &str) -> Result<(BrowserProc, u16)> {
         .stderr(Stdio::null())
         .spawn()
         .map_err(|e| {
-            Error::internal(
-                "bootstrap",
-                Box::leak(format!("browser spawn failed ({e}): {bin_display}").into_boxed_str()),
-            )
+            // `context` is static: keep the detail in the debug trace
+            // instead of leaking a heap string per failure.
+            trace(&format!("browser spawn failed ({e}): {bin_display}"));
+            Error::internal("bootstrap", "browser spawn failed")
         })?;
     Ok((BrowserProc { child, profile_dir }, port))
 }
@@ -497,13 +619,14 @@ fn ws_recv_until(
                 .map_err(|_| Error::schema("bootstrap", "bad cdp json"))?;
             if v.get("id").and_then(|i| i.as_u64()) == Some(want_id) {
                 if let Some(err) = v.get("error") {
-                    return Err(Error::schema(
-                        "bootstrap",
-                        Box::leak(err.to_string().into_boxed_str()),
-                    ));
+                    trace(&format!("cdp error response: {err}"));
+                    return Err(Error::schema("bootstrap", "cdp error response"));
                 }
                 return Ok(v.get("result").cloned().unwrap_or(serde_json::Value::Null));
             }
+        } else if let Message::Ping(payload) = msg {
+            // unanswered pings let the browser half-close an idle session
+            let _ = ws.send(Message::Pong(payload));
         }
     }
 }
@@ -754,7 +877,7 @@ pub fn harvest_blocking(engine: &str) -> Result<String> {
                     .to_string();
                 trace("settle-probe");
                 let (href, ready) = state.split_once('|').unwrap_or(("", ""));
-                let on_target = href.contains("/search")
+                let on_target = href.contains(settle_marker(engine))
                     && !href.contains("check=1")
                     && !href.contains("/check");
                 if on_target && ready == "complete" {
@@ -826,9 +949,75 @@ mod tests {
     }
 
     #[test]
+    fn settle_markers_match_their_seeds() {
+        // every seed URL must contain its own settle marker, or harvests
+        // loop until the 45s settle timeout on every run
+        for (engine, seed, _) in SEEDS {
+            assert!(
+                seed.contains(settle_marker(engine)),
+                "{engine} seed {seed} lacks its settle marker"
+            );
+        }
+    }
+
+    #[test]
+    fn version_validation_rejects_garbage() {
+        assert!(valid_cft_version("152.0.7977.64"));
+        assert!(valid_cft_version("100.0.1"));
+        assert!(!valid_cft_version(""));
+        assert!(!valid_cft_version("stable"));
+        assert!(!valid_cft_version("<html>captive portal</html>"));
+        assert!(!valid_cft_version("152.0.7977.64\nmalicious"));
+    }
+
+    #[test]
     fn finds_some_browser_or_none_gracefully() {
         // on dev machines there is usually one; on CI none - both are fine,
         // the point is this never panics
         let _ = find_browser();
+    }
+
+    #[test]
+    fn cached_shell_prefers_newest_numeric_version() {
+        // lexicographic order would rank "99.x" above "152.x"; versions
+        // must compare numerically per part
+        let root = std::env::temp_dir().join(format!("phrona-cache-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        for v in ["99.0.1", "152.0.7977.64"] {
+            let bin = root
+                .join(format!("chrome-headless-shell-{v}-linux64"))
+                .join("chrome-headless-shell-linux64")
+                .join("chrome-headless-shell");
+            std::fs::create_dir_all(bin.parent().unwrap()).unwrap();
+            std::fs::write(&bin, b"x").unwrap();
+        }
+        unsafe {
+            std::env::set_var("PHRONA_CACHE_DIR", &root);
+        }
+        let found = find_cached_shell().expect("cached binary must be found");
+        unsafe {
+            std::env::remove_var("PHRONA_CACHE_DIR");
+        }
+        assert!(
+            found.to_string_lossy().contains("152.0.7977.64"),
+            "got {found:?}"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        unsafe {
+            std::env::set_var("PHRONA_CACHE_DIR", &root);
+        }
+        assert!(find_cached_shell().is_none(), "empty cache finds nothing");
+        unsafe {
+            std::env::remove_var("PHRONA_CACHE_DIR");
+        }
+    }
+
+    #[tokio::test]
+    async fn block_on_isolated_works_inside_runtime() {
+        // inside a runtime context the work must hop threads instead of
+        // nesting runtimes (which panics)
+        let v =
+            block_on_isolated(async { Ok::<i32, Error>(41 + 1) }, "test").expect("isolated run");
+        assert_eq!(v, 42);
     }
 }

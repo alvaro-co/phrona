@@ -33,85 +33,77 @@ impl Engine for StartpageImages {
 /// the React/JSON payload embedded in the page.
 pub fn parse_startpage_images(html: &str, engine: &str) -> Vec<RawResult> {
     let mut out = Vec::new();
-    for marker in ["React.createElement(UIStartpage.AppSerpImages, {"] {
-        let Some(start) = html.find(marker) else {
+    let marker = "React.createElement(UIStartpage.AppSerpImages, {";
+    let Some(start) = html.find(marker) else {
+        return out;
+    };
+    let rest = &html[start + marker.len()..];
+    let Some(end) = rest.rfind("}})") else {
+        return out;
+    };
+    let payload = format!("{{{}}}", &rest[..end + 1]);
+    let Ok(json) = serde_json::from_str::<serde_json::Value>(&payload) else {
+        return out;
+    };
+    let Some(mainline) = json
+        .pointer("/render/presenter/regions/mainline")
+        .and_then(|v| v.as_array())
+    else {
+        return out;
+    };
+    let mut pos = 0u32;
+    for section in mainline {
+        let Some(results) = section.get("results").and_then(|r| r.as_array()) else {
             continue;
         };
-        let rest = &html[start + marker.len()..];
-        let Some(end) = rest.rfind("}})") else {
-            continue;
-        };
-        let payload = format!("{{{}}}", &rest[..end + 1]);
-        let Ok(json) = serde_json::from_str::<serde_json::Value>(&payload) else {
-            continue;
-        };
-        let Some(mainline) = json
-            .pointer("/render/presenter/regions/mainline")
-            .and_then(|v| v.as_array())
-        else {
-            continue;
-        };
-        let mut pos = 0u32;
-        for section in mainline {
-            let Some(results) = section.get("results").and_then(|r| r.as_array()) else {
-                continue;
-            };
-            for item in results {
-                let mut url = item
-                    .get("clickUrl")
-                    .and_then(|u| u.as_str())
-                    .or_else(|| item.get("altClickUrl").and_then(|u| u.as_str()))
-                    .unwrap_or("")
-                    .to_string();
-                if url.starts_with("/av/proxy-image") {
-                    if let Ok(parsed) = url::Url::parse(&format!("https://www.startpage.com{url}"))
-                    {
-                        let pairs: Vec<(String, String)> = parsed
-                            .query_pairs()
-                            .filter(|(k, _)| k == "piurl")
-                            .map(|(k, v)| (k.into_owned(), v.into_owned()))
-                            .collect();
-                        if let Some((_, piurl)) = pairs.first() {
-                            url = piurl.clone();
-                        }
-                    }
-                }
-                let image = item
-                    .get("rawImageUrl")
-                    .and_then(|u| u.as_str())
-                    .unwrap_or("");
-                if url.is_empty() || image.is_empty() {
-                    continue;
-                }
-                pos += 1;
-                out.push(RawResult {
-                    title: item
-                        .get("title")
-                        .and_then(|t| t.as_str())
-                        .unwrap_or("")
-                        .to_string(),
-                    url: url.to_string(),
-                    image_url: image.to_string(),
-                    thumbnail_url: item
-                        .get("thumbnailUrl")
-                        .and_then(|u| u.as_str())
-                        .unwrap_or("")
-                        .to_string(),
-                    width: item.get("width").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
-                    height: item.get("height").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
-                    description: item
-                        .get("description")
-                        .and_then(|d| d.as_str())
-                        .unwrap_or("")
-                        .to_string(),
-                    engine: engine.to_string(),
-                    position: pos,
-                    ..Default::default()
-                });
+        for item in results {
+            let mut url = item
+                .get("clickUrl")
+                .and_then(|u| u.as_str())
+                .or_else(|| item.get("altClickUrl").and_then(|u| u.as_str()))
+                .unwrap_or("")
+                .to_string();
+            if url.starts_with("/av/proxy-image")
+                && let Ok(parsed) = url::Url::parse(&format!("https://www.startpage.com{url}"))
+                && let Some(piurl) = parsed
+                    .query_pairs()
+                    .find(|(k, _)| k == "piurl")
+                    .map(|(_, v)| v.into_owned())
+            {
+                url = piurl;
             }
-        }
-        if !out.is_empty() {
-            break;
+            let image = item
+                .get("rawImageUrl")
+                .and_then(|u| u.as_str())
+                .unwrap_or("");
+            if url.is_empty() || image.is_empty() {
+                continue;
+            }
+            pos += 1;
+            out.push(RawResult {
+                title: item
+                    .get("title")
+                    .and_then(|t| t.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                url: url.to_string(),
+                image_url: image.to_string(),
+                thumbnail_url: item
+                    .get("thumbnailUrl")
+                    .and_then(|u| u.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                width: item.get("width").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
+                height: item.get("height").and_then(|v| v.as_u64()).unwrap_or(0) as u32,
+                description: item
+                    .get("description")
+                    .and_then(|d| d.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+                engine: engine.to_string(),
+                position: pos,
+                ..Default::default()
+            });
         }
     }
     out

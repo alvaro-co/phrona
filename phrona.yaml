@@ -25,6 +25,8 @@
 #   PHRONA_SECURITY_DENIED_DOMAINS    security.denied_domains (comma list)
 #   PHRONA_ENGINES_PROXIES            engines.proxies (comma list)
 #   PHRONA_ENGINES_PROFILE            engines.profile
+#   PHRONA_ENGINES_AUTO_BOOTSTRAP     engines.auto_bootstrap (true/false;
+#                                     PHRONA_AUTO_BOOTSTRAP is an alias)
 
 server:
   # REST API bind address (default: 127.0.0.1:8080)
@@ -34,7 +36,7 @@ server:
   # API key required by REST/MCP clients; unset (or null) disables auth.
   # Prefer the PHRONA_API_KEY environment variable over committing secrets.
   api_key: null
-  # Fixed-window request cap for the search/suggest endpoints (default: 120).
+  # Fixed-window request cap for the protected endpoints (default: 120).
   # Set to 0 to disable rate limiting.
   rate_limit_per_minute: 120
   # Maximum accepted request body size in bytes (default: 2097152 = 2 MiB).
@@ -57,7 +59,7 @@ search:
 
 security:
   # Block connections to private/loopback/link-local IP ranges (default: true).
-  # The core extractor always enforces IP safety.
+  # Enforced on every outbound target (initial URL and each redirect hop).
   block_private_ips: true
   # Optional allow-list of hostnames for outbound requests (empty = all).
   allowed_domains: []

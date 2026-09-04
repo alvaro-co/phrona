@@ -38,5 +38,5 @@ print(f"  text: {page['text'][:200]}...")
 
 # Grounded output: best answer plus cited sources.
 print("\nengines by category:")
-for cat in ("web", "images", "news", "videos", "books"):
+for cat in ("web", "images", "news", "videos", "books", "code", "papers", "archives"):
     print(f"  {cat}: {len(phrona.engines(cat)[cat])} engines")

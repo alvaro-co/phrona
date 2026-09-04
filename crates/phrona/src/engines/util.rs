@@ -135,7 +135,7 @@ pub async fn read_body(resp: wreq::Response, engine: &'static str) -> Result<Vec
     use futures::StreamExt;
     if resp
         .content_length()
-        .is_some_and(|len| len as usize > MAX_RESPONSE_BODY)
+        .is_some_and(|len| len > MAX_RESPONSE_BODY as u64)
     {
         return Err(Error::schema(engine, BODY_TOO_LARGE));
     }
@@ -148,7 +148,10 @@ pub async fn read_body(resp: wreq::Response, engine: &'static str) -> Result<Vec
     );
     let mut stream = resp.bytes_stream();
     while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|_| Error::internal(engine, "failed to read response body"))?;
+        // transport failures keep their own classification (timeout /
+        // network) instead of degrading to an internal error: the
+        // orchestrator uses it for session-refresh candidacy
+        let chunk = chunk.map_err(Error::from)?;
         if out.len() + chunk.len() > MAX_RESPONSE_BODY {
             return Err(Error::schema(engine, BODY_TOO_LARGE));
         }
@@ -285,12 +288,18 @@ pub fn normalize_date(raw: &str) -> Option<String> {
         ("month", &["month", "months", "mes", "monat"]),
         ("year", &["year", "years", "año", "jahr"]),
     ];
-    let num = s
-        .chars()
-        .take_while(|c| c.is_ascii_digit())
-        .collect::<String>()
-        .parse::<i64>()
-        .ok()?;
+    let digits: String = s.chars().take_while(|c| c.is_ascii_digit()).collect();
+    let num: i64 = if digits.is_empty() {
+        // "a day ago" / "an hour ago" carry an implicit one
+        let lower = s.to_ascii_lowercase();
+        if lower.starts_with("a ") || lower.starts_with("an ") {
+            1
+        } else {
+            return None;
+        }
+    } else {
+        digits.parse().ok()?
+    };
     let unit_name = unit
         .iter()
         .find_map(|(name, ws)| ws.iter().any(|w| words.contains(w)).then_some(*name))?;
@@ -397,11 +406,10 @@ pub async fn fetch_ddg_vertical(
 ) -> Result<serde_json::Value> {
     let vqd = ddg_vqd(ctx, &ctx.opts.query).await?;
     let url = build_url(&vqd)?;
-    let resp = ctx.client.get_with_headers(&url, &ddg_json_headers()).await;
-    let resp = match resp {
-        Ok(r) => r,
-        Err(e) => return Err(e),
-    };
+    let resp = ctx
+        .client
+        .get_with_headers(&url, &ddg_json_headers())
+        .await?;
     match check_response(engine, &resp, MediaType::Json) {
         Ok(()) => {}
         // stale token / rate window: refresh and retry once
@@ -490,11 +498,11 @@ pub fn parse_ddg_html(body: &str, engine: &str) -> (Vec<crate::models::RawResult
 
 /// Fallback HTTP GET via the system `curl` binary.
 ///
-/// Used only by bootstrap engines (annas_archive/google/qwant): their
-/// anti-bot systems dynamically flag individual TLS fingerprints, so when
-/// the embedded client's fingerprint is tarpitted, the system curl's
-/// completely different stack still passes with valid cookies.
-/// Returns `(status_code, body_bytes)`; follows redirects.
+/// Used only by bootstrap engines with session cookies (today: only
+/// annas_archive): their anti-bot systems dynamically flag individual TLS
+/// fingerprints, so when the embedded client's fingerprint is tarpitted,
+/// the system curl's completely different stack still passes with valid
+/// cookies. Returns `(status_code, body_bytes)`; follows redirects.
 pub fn curl_get(
     url: &str,
     cookie_header: Option<&str>,
@@ -539,6 +547,24 @@ pub fn random_token(len: usize) -> String {
     (0..len)
         .map(|_| CHARS[rng.random_range(0..CHARS.len())] as char)
         .collect()
+}
+
+/// Parse a human view/subscriber count (`"1.2M"`, `"34K"`, `"1,234"`,
+/// `"567"`) into a plain number. Unknown shapes yield 0 rather than an
+/// error: counts are display metadata, never control flow.
+pub fn parse_count(s: &str) -> u64 {
+    let s = s.trim().replace([',', ' ', '_'], "");
+    let (num, mult) = match s.strip_suffix(['M', 'm']) {
+        Some(n) => (n, 1_000_000.0),
+        None => match s.strip_suffix(['K', 'k']) {
+            Some(n) => (n, 1_000.0),
+            None => match s.strip_suffix(['B', 'b']) {
+                Some(n) => (n, 1_000_000_000.0),
+                None => (s.as_str(), 1.0),
+            },
+        },
+    };
+    num.parse::<f64>().map(|v| (v * mult) as u64).unwrap_or(0)
 }
 
 #[cfg(test)]

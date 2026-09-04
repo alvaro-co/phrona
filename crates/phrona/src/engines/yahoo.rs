@@ -62,39 +62,34 @@ pub fn parse_yahoo(html: &str, engine: &str) -> Vec<RawResult> {
     let doc = parse::parse_html(html);
     let mut out = Vec::new();
     let mut pos = 0u32;
-    for sel_str in ["div.algo-sr", "div.relsrch"] {
-        let Ok(sel) = scraper::Selector::parse(sel_str) else {
-            continue;
-        };
-        for node in doc.select(&sel) {
-            let title = parse::select_first_nonempty(&node, ".compTitle h3")
-                .or_else(|| parse::select_first_nonempty(&node, "h3"));
-            let href = parse::attr(&node, ".compTitle h3 a", "href")
-                .or_else(|| parse::attr(&node, ".compTitle a", "href"))
-                .or_else(|| parse::attr(&node, "h3 a", "href"));
-            if let (Some(title), Some(mut url)) = (title, href) {
-                if url.contains("aclick") {
-                    continue;
-                }
-                url = parse::unwrap_yahoo_url(&url);
-                url = parse::unwrap_wrapper_url(&url);
-                url = util::clean_url(&url);
-                if !url.starts_with("http") {
-                    continue;
-                }
-                pos += 1;
-                out.push(RawResult {
-                    title,
-                    url,
-                    description: parse::select_text(&node, ".compText").unwrap_or_default(),
-                    engine: engine.to_string(),
-                    position: pos,
-                    ..Default::default()
-                });
+    // `div.algo-sr` only: `div.relsrch` is the "related searches" box,
+    // whose links are suggestions, not results
+    let sel = scraper::Selector::parse("div.algo-sr").unwrap();
+    for node in doc.select(&sel) {
+        let title = parse::select_first_nonempty(&node, ".compTitle h3")
+            .or_else(|| parse::select_first_nonempty(&node, "h3"));
+        let href = parse::attr(&node, ".compTitle h3 a", "href")
+            .or_else(|| parse::attr(&node, ".compTitle a", "href"))
+            .or_else(|| parse::attr(&node, "h3 a", "href"));
+        if let (Some(title), Some(mut url)) = (title, href) {
+            if url.contains("aclick") {
+                continue;
             }
-        }
-        if !out.is_empty() {
-            break;
+            url = parse::unwrap_yahoo_url(&url);
+            url = parse::unwrap_wrapper_url(&url);
+            url = util::clean_url(&url);
+            if !url.starts_with("http") {
+                continue;
+            }
+            pos += 1;
+            out.push(RawResult {
+                title,
+                url,
+                description: parse::select_text(&node, ".compText").unwrap_or_default(),
+                engine: engine.to_string(),
+                position: pos,
+                ..Default::default()
+            });
         }
     }
     out

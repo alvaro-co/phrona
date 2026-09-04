@@ -54,14 +54,9 @@ pub fn parse_marginalia(html: &str, engine: &str) -> Vec<RawResult> {
     let title_sel = scraper::Selector::parse("h2 a.title, h2 a").unwrap();
     let mut pos = 0u32;
     for node in doc.select(&sel) {
-        let title = node
-            .select(&title_sel)
-            .next()
-            .map(|a| parse::text_of(&a))
-            .unwrap_or_default();
-        let href = node
-            .select(&title_sel)
-            .next()
+        let link = node.select(&title_sel).next();
+        let title = link.as_ref().map(|a| parse::text_of(a)).unwrap_or_default();
+        let href = link
             .and_then(|a| a.value().attr("href"))
             .unwrap_or("")
             .to_string();

@@ -132,7 +132,7 @@ fn endpoint_label(path: &str) -> &'static str {
 }
 
 /// Counts every HTTP request after the inner service responded: endpoint
-/// (bounded label, see [`endpoint_label`]) and status code are the only
+/// (bounded label, see `endpoint_label`) and status code are the only
 /// labels.
 pub async fn http_layer(req: Request, next: Next) -> Response {
     let started = Instant::now();

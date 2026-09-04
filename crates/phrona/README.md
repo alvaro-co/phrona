@@ -1,7 +1,8 @@
 # phrona
 
-High-performance metasearch engine library for Rust. Queries 26 search
-engines across 5 categories (web, images, news, videos, books) in parallel,
+High-performance metasearch engine library for Rust. Queries 29 search
+engines across 8 categories (web, images, news, videos, books, code,
+papers, archives) in parallel,
 impersonates real browsers over HTTP/2, then merges, deduplicates and ranks
 results locally.
 
@@ -27,7 +28,7 @@ let resp = client.search(SearchOptions::new("rust programming")).await?;
 
 ## Features
 
-- 26 engines, 5 categories, suggestions and page extraction (AI grounding).
+- 29 engines, 8 categories, suggestions and page extraction (AI grounding).
 - Impersonated HTTP/2 with TLS fingerprint spoofing via wreq profiles
   (Chrome, Firefox, Safari, Edge, Opera, OkHttp).
 - Cross-engine merging: tracking-parameter stripping, dedup, ranking,

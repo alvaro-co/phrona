@@ -10,9 +10,9 @@ and the MCP server.
 | Option | Meaning |
 | --- | --- |
 | `--json` | machine-readable output (all commands) |
-| `--profile <name>` | browser impersonation: chrome, firefox, safari, edge, opera, okhttp, random |
-| `--proxy <url>` | proxy URL, repeatable (only the first is used today) |
-| `--timeout <sec>` | request timeout (default 20) |
+| `--profile <name>` | browser impersonation: chrome (+100/120/131/140/148/149), firefox (+139/148), safari/26, edge/148, opera/131, okhttp, random |
+| `--proxy <url>` | proxy URL, repeatable (one pooled client per proxy, used round-robin) |
+| `--timeout <sec>` | request timeout (default 15) |
 | `-h`, `-V` | help, version |
 
 ## Commands
@@ -27,7 +27,7 @@ phrona search "rust" --category news --time-range week --region us-en --json
 phrona search "rust" --category images --safesearch strict --max-results 20
 ```
 
-Options: `--category web|images|news|videos|books`, `--engines <csv>`,
+Options: `--category web|images|news|videos|books|code|papers|archives`, `--engines <csv>`,
 `--max-results`, `--safesearch off|moderate|strict`, `--region`, `--language`,
 `--time-range day|week|month|year`, `--filters`, `--page`.
 
@@ -99,7 +99,7 @@ phrona serve --no-rest                         # MCP-over-TCP only
 
 - REST API: identical to `phrona-api` (frontend at `/`, `/health`,
   `/v1/*`, Tavily-compatible `/search`). See [docs/api.md](api.md).
-- MCP over TCP: the same nine tools as the stdio server, framed as
+- MCP over TCP: the same twelve tools as the stdio server, framed as
   newline-delimited JSON-RPC 2.0 over a raw TCP socket. Clients that
   cannot use stdio (remote agents, containers) connect with any MCP
   client configured for a TCP transport.

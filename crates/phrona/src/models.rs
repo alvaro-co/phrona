@@ -17,16 +17,25 @@ pub enum Category {
     Videos,
     /// Book search.
     Books,
+    /// Source-code and repository search.
+    Code,
+    /// Academic paper search.
+    Papers,
+    /// Internet Archive media search.
+    Archives,
 }
 
 impl Category {
     /// All categories, in a stable order.
-    pub const ALL: [Category; 5] = [
+    pub const ALL: [Category; 8] = [
         Category::Web,
         Category::Images,
         Category::News,
         Category::Videos,
         Category::Books,
+        Category::Code,
+        Category::Papers,
+        Category::Archives,
     ];
 
     /// The lowercase string form used by the REST API and JSON serialization.
@@ -37,7 +46,24 @@ impl Category {
             Category::News => "news",
             Category::Videos => "videos",
             Category::Books => "books",
+            Category::Code => "code",
+            Category::Papers => "papers",
+            Category::Archives => "archives",
         }
+    }
+
+    /// Canonical lowercase name of every category, in [`Category::ALL`]
+    /// order. Single source of truth for "expected one of: ..." messages
+    /// and error strings across all surfaces, so adding a category cannot
+    /// leave a stale list behind.
+    pub const NAMES: [&'static str; 8] = [
+        "web", "images", "news", "videos", "books", "code", "papers", "archives",
+    ];
+
+    /// Comma-joined [`Category::NAMES`] for human-facing messages
+    /// (`"web, images, news, videos, books, code, papers, archives"`).
+    pub fn list_str() -> String {
+        Self::NAMES.join(", ")
     }
 }
 
@@ -51,6 +77,9 @@ impl std::str::FromStr for Category {
             "news" => Ok(Category::News),
             "videos" | "video" | "vid" => Ok(Category::Videos),
             "books" | "book" => Ok(Category::Books),
+            "code" | "repos" | "repositories" => Ok(Category::Code),
+            "papers" | "paper" | "arxiv" => Ok(Category::Papers),
+            "archives" | "archive" | "archive_org" => Ok(Category::Archives),
             _ => Err(()),
         }
     }
@@ -336,5 +365,55 @@ impl SearchResponse {
             ResultItem::Web(w) => Some(w),
             _ => None,
         })
+    }
+
+    /// Iterate over just the image results.
+    pub fn images(&self) -> impl Iterator<Item = &ImageResult> {
+        self.results.iter().filter_map(|r| match r {
+            ResultItem::Image(i) => Some(i),
+            _ => None,
+        })
+    }
+
+    /// Iterate over just the news results.
+    pub fn news(&self) -> impl Iterator<Item = &NewsResult> {
+        self.results.iter().filter_map(|r| match r {
+            ResultItem::News(n) => Some(n),
+            _ => None,
+        })
+    }
+
+    /// Iterate over just the video results.
+    pub fn videos(&self) -> impl Iterator<Item = &VideoResult> {
+        self.results.iter().filter_map(|r| match r {
+            ResultItem::Video(v) => Some(v),
+            _ => None,
+        })
+    }
+
+    /// Iterate over just the book results.
+    pub fn books(&self) -> impl Iterator<Item = &BookResult> {
+        self.results.iter().filter_map(|r| match r {
+            ResultItem::Book(b) => Some(b),
+            _ => None,
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn category_names_match_all_in_order() {
+        assert_eq!(Category::NAMES.len(), Category::ALL.len());
+        for (cat, name) in Category::ALL.iter().zip(Category::NAMES) {
+            assert_eq!(cat.as_str(), name);
+            assert_eq!(name.parse::<Category>().unwrap(), *cat);
+        }
+        assert_eq!(
+            Category::list_str(),
+            "web, images, news, videos, books, code, papers, archives"
+        );
     }
 }

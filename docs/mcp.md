@@ -32,7 +32,7 @@ no ports, no config file, no API keys.
 
 ## Tools
 
-Nine tools, each with JSON Schema parameters (generated with schemars):
+Twelve tools, each with JSON Schema parameters (generated with schemars):
 
 | Tool | Description |
 | --- | --- |
@@ -41,6 +41,9 @@ Nine tools, each with JSON Schema parameters (generated with schemars):
 | `news_search` | news results with date/source (query, max_results, region, time_range, engines) |
 | `video_search` | videos with duration/views/uploader (query, max_results, safesearch, region, engines) |
 | `book_search` | books with author/publisher (query, max_results, region, engines) |
+| `code_search` | GitHub repos with stars/language (query, max_results, region, engines) |
+| `papers_search` | arXiv papers with authors/abstract (query, max_results, region, engines) |
+| `archives_search` | Internet Archive media (query, max_results, region, engines) |
 | `suggest` | query completions (query, source, region) |
 | `fetch_page` | extract a page: title, description, text (max_chars, query bias) |
 | `search_grounded` | RAG: search + pick best page + return verbatim excerpt and ranked sources |
@@ -75,5 +78,6 @@ Each message must be one line (newline-delimited JSON). `tools/call` uses
 
 ## Options
 
-Only the HTTP options of the core client are in effect (Chrome profile,
-20s timeout); there is no config surface - keep it simple for agents.
+The full client configuration applies (profile, timeout defaulting to 15s,
+proxies, `max_results` clamp): the server is built from `phrona.yaml` /
+environment via the typed config, exactly like the REST API.

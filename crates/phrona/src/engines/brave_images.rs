@@ -52,11 +52,17 @@ pub fn parse_brave_images(html: &str, engine: &str) -> Vec<RawResult> {
             continue;
         }
         let image = crate::engines::util::brave_b64_decode(&thumb);
+        if image.is_empty() {
+            continue;
+        }
         let (width, height) =
             crate::engines::util::brave_dims(node.value().attr("style").unwrap_or(""));
         pos += 1;
         out.push(RawResult {
             title,
+            // the result page is the image itself: without this the
+            // merger drops the item as an answer marker (empty url)
+            url: image.clone(),
             image_url: image,
             thumbnail_url: thumb,
             width,

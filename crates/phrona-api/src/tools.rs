@@ -96,40 +96,47 @@ pub async fn test(
     }
     let cats: Vec<Category> = match p.category.as_deref() {
         Some(c) => vec![c.parse::<Category>().map_err(|_| {
-            AppError::bad_request(
-                "invalid category, expected one of: web, images, news, videos, books",
-            )
+            AppError::bad_request(format!(
+                "invalid category, expected one of: {}",
+                Category::list_str()
+            ))
         })?],
         None => Category::ALL.to_vec(),
     };
     let query = p.query.unwrap_or_else(|| "rust programming".to_string());
     let max_results = p.max_results.unwrap_or(5).clamp(1, 10);
 
-    let mut out = Vec::new();
-    for cat in cats {
+    // categories probe concurrently: sequential probing stacks 8
+    // per-category deadlines into a minute-plus response (`join_all`
+    // preserves input order, so the report stays stable)
+    let client = &state.client;
+    let probes = cats.into_iter().map(|cat| {
         let mut opts = phrona::SearchOptions::new(query.clone());
         opts.category = cat;
         opts.max_results = max_results;
         // availability probing must observe every engine, not stop at the
         // first ones that fill max_results
         opts.probe_all = true;
-        match state.client.search(opts).await {
-            Ok(resp) => out.push(json!({
-                "category": cat.as_str(),
-                "total": resp.total,
-                "elapsed_ms": resp.elapsed_ms,
-                "answer": resp.answer,
-                "engines": resp.engines,
-            })),
-            Err(e) => out.push(json!({
-                "category": cat.as_str(),
-                "total": 0,
-                "elapsed_ms": 0,
-                "answer": null,
-                "engines": [],
-                "error": e.to_string(),
-            })),
+        async move {
+            match client.search(opts).await {
+                Ok(resp) => json!({
+                    "category": cat.as_str(),
+                    "total": resp.total,
+                    "elapsed_ms": resp.elapsed_ms,
+                    "answer": resp.answer,
+                    "engines": resp.engines,
+                }),
+                Err(e) => json!({
+                    "category": cat.as_str(),
+                    "total": 0,
+                    "elapsed_ms": 0,
+                    "answer": null,
+                    "engines": [],
+                    "error": e.to_string(),
+                }),
+            }
         }
-    }
+    });
+    let out: Vec<Value> = futures::future::join_all(probes).await;
     Ok(Json(Value::Array(out)))
 }

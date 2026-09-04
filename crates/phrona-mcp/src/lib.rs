@@ -79,7 +79,9 @@ struct SuggestParams {
 
 #[derive(Debug, serde::Deserialize, JsonSchema)]
 struct EnginesParams {
-    #[schemars(description = "Category: web, images, news, videos or books (default: all)")]
+    #[schemars(
+        description = "Category: web, images, news, videos, books, code, papers or archives (default: all)"
+    )]
     #[serde(default)]
     category: Option<String>,
 }
@@ -118,7 +120,8 @@ impl PhronaMcp {
                 .collect();
         }
         if let Some(m) = p.max_results {
-            opts.max_results = m.clamp(1, max_results_limit);
+            // `max(1)`: a zero operator limit must clamp, not panic in `clamp`
+            opts.max_results = m.clamp(1, max_results_limit.max(1));
         }
         opts.region = p.region.clone();
         opts.language = p.language.clone();
@@ -212,13 +215,34 @@ impl PhronaMcp {
     }
 
     #[tool(
+        description = "Search GitHub repositories (code). Returns repo name, url, stars, language and description."
+    )]
+    async fn code_search(&self, Parameters(p): Parameters<SearchParams>) -> String {
+        self.run_search(&p, Category::Code).await
+    }
+
+    #[tool(
+        description = "Search arXiv academic papers. Returns title, authors, abstract and published date."
+    )]
+    async fn papers_search(&self, Parameters(p): Parameters<SearchParams>) -> String {
+        self.run_search(&p, Category::Papers).await
+    }
+
+    #[tool(
+        description = "Search Internet Archive media (texts, audio, video, software). Returns item title, url and description."
+    )]
+    async fn archives_search(&self, Parameters(p): Parameters<SearchParams>) -> String {
+        self.run_search(&p, Category::Archives).await
+    }
+
+    #[tool(
         description = "Fetch a URL and extract its readable main content. Use for grounding answers on the sources returned by web_search."
     )]
     async fn fetch_page(&self, Parameters(p): Parameters<FetchParams>) -> String {
         match phrona::extract(
             self.client.http(),
             &p.url,
-            p.max_chars.unwrap_or(8000),
+            p.max_chars.unwrap_or(8000).clamp(1, 100_000),
             p.query.as_deref(),
         )
         .await
@@ -281,7 +305,8 @@ impl PhronaMcp {
                 Err(_) => {
                     return envelope(serde_json::json!({
                         "error": format!(
-                            "invalid category '{c}', expected one of: web, images, news, videos, books"
+                            "invalid category '{c}', expected one of: {}",
+                            Category::list_str()
                         )
                     }));
                 }
@@ -300,7 +325,7 @@ impl PhronaMcp {
     }
 
     #[tool(
-        description = "Grounded search for RAG: returns a synthesized answer plus ranked sources with content. Prefer this over web_search + fetch_page for single-shot questions."
+        description = "Grounded web search for RAG: returns a synthesized answer plus ranked sources with content. Web category only; use the *_search tools plus fetch_page for other categories. Prefer this over web_search + fetch_page for single-shot questions."
     )]
     async fn search_grounded(&self, Parameters(p): Parameters<SearchParams>) -> String {
         let opts = match Self::build_opts(&p, Category::Web, self.max_results_limit) {
@@ -382,15 +407,17 @@ pub async fn serve_tcp(
     shutdown: std::sync::Arc<tokio::sync::Notify>,
 ) -> anyhow::Result<()> {
     tracing::info!("phrona-mcp listening on {}", listener.local_addr()?);
+    // one service for every connection: per-connection builds would redo
+    // the whole client pool (connection pools, cookie jars) each time
+    let service = PhronaMcp::with_config(&cfg);
     let mut conns: tokio::task::JoinSet<()> = tokio::task::JoinSet::new();
     loop {
         tokio::select! {
             _ = shutdown.notified() => break,
             accepted = listener.accept() => {
                 let (socket, _) = accepted?;
-                let cfg = cfg.clone();
+                let service = service.clone();
                 conns.spawn(async move {
-                    let service = PhronaMcp::with_config(&cfg);
                     match service.serve(socket).await {
                         Ok(server) => {
                             let _ = server.waiting().await;

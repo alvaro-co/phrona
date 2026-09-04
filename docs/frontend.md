@@ -1,6 +1,6 @@
 # Web frontend
 
-A single static, dependency-free page in `frontend/` (index.html,
+A single static, dependency-free page in `crates/phrona-api/assets/` (index.html,
 style.css, app.js), served by the API server at `/` (see
 [docs/api.md](api.md)). Material 3 inspired: dynamic color tokens as CSS
 variables, light/dark themes, rounded chips and cards, focus rings. No
@@ -15,7 +15,7 @@ library:
 
 - Search box with debounced live suggestions (180 ms) from `/v1/suggest`
   (merged across all sources, deduplicated).
-- Category chips: web, images, news, videos, books.
+- Category chips: web, images, news, videos, books, code, papers, archives.
 - Engine chips (loaded from `/v1/engines`): toggle engines on/off; the
   empty selection means "all engines of the category".
 - Parameters: region, language, time range, safesearch, max results,
@@ -59,8 +59,9 @@ preference is stored as `phrona-theme`.
 | `style.css` | theme tokens, layout, cards, chips, tables |
 | `app.js` | state, search, rendering, tools (one file, sectioned) |
 
-The server reads these files from disk per request (no embedding), so
-editing them takes effect on reload without a rebuild.
+The server reads these files from disk per request when present (edit and
+reload, no rebuild); standalone binaries and containers fall back to the
+copies embedded at compile time, so UI routes never 404.
 
 ## API contract used
 

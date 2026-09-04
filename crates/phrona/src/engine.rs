@@ -22,17 +22,19 @@ pub struct EngineContext<'a> {
 }
 
 /// Shared cross-engine state for a search: caches for anti-bot tokens
-/// (DuckDuckGo `vqd`, Bing/Startpage `sc`) that engines fetch once and reuse
-/// across queries. Bounded and TTL-capped (1 hour). Also carries
+/// (DuckDuckGo `vqd`, Startpage `sc`) that engines fetch once and reuse
+/// across queries. Bounded and TTL-capped (see `cache_ttl`). Also carries
 /// operator-supplied bootstrap cookies (see
 /// [`EngineShared::bootstrap_for`]).
-#[derive(Default)]
 pub struct EngineShared {
     /// `parking_lot::RwLock`: synchronous reads/writes, never blocks the
     /// async runtime (no `.await` involved).
     pub vqd: RwLock<HashMap<String, (Instant, String)>>,
-    /// Cached Bing/Startpage anti-bot `sc` token (timestamp + value).
+    /// Cached Startpage anti-bot `sc` token (timestamp + value).
     pub sc: RwLock<Option<(Instant, String)>>,
+    /// TTL for the `vqd`/`sc` token caches. Defaults to [`CACHE_TTL`];
+    /// override from `search.cache_ttl_secs` via [`crate::SearchClient`].
+    pub cache_ttl: Duration,
     /// Operator-supplied per-engine `Cookie` header values earned in a real
     /// browser session (e.g. Google's `__Secure-ENID`, Qwant's `datadome`,
     /// Anna's Archive's ddos-guard clearance). See `PhronaConfig`.
@@ -40,6 +42,22 @@ pub struct EngineShared {
     /// When each engine's cookies were last auto-harvested
     /// ([`crate::bootstrap`]), guarding against re-harvest loops.
     pub(crate) bootstrap_at: RwLock<HashMap<String, Instant>>,
+}
+
+/// Default TTL for the `vqd`/`sc` token caches (matches
+/// `search.cache_ttl_secs`).
+pub const CACHE_TTL: Duration = Duration::from_secs(3600);
+
+impl Default for EngineShared {
+    fn default() -> Self {
+        Self {
+            vqd: RwLock::new(HashMap::new()),
+            sc: RwLock::new(None),
+            cache_ttl: CACHE_TTL,
+            bootstrap: RwLock::new(HashMap::new()),
+            bootstrap_at: RwLock::new(HashMap::new()),
+        }
+    }
 }
 
 /// Minimum interval between automatic headless harvests for one engine.
@@ -98,20 +116,20 @@ impl EngineShared {
     }
 }
 
-const CACHE_TTL: Duration = Duration::from_secs(3600);
-
 impl EngineShared {
     /// Read a `vqd` token by cache key if present and not expired.
     pub fn vqd_get(&self, key: &str) -> Option<String> {
+        let ttl = self.cache_ttl;
         let m = self.vqd.read();
         m.get(key)
-            .filter(|(at, _)| at.elapsed() < CACHE_TTL)
+            .filter(|(at, _)| at.elapsed() < ttl)
             .map(|(_, v)| v.clone())
     }
 
     /// Store a `vqd` token under `key`, evicting expired entries (and, if
     /// still at capacity, the oldest token) to keep the cache bounded.
     pub fn vqd_set(&self, key: &str, value: String) {
+        let ttl = self.cache_ttl;
         let mut m = self.vqd.write();
         // Bounded memory: under arbitrary queries the per-query token cache
         // would otherwise grow forever in long-running services. Once it
@@ -119,7 +137,7 @@ impl EngineShared {
         // the oldest token to make room.
         const VQD_CACHE_LIMIT: usize = 10_000;
         if m.len() >= VQD_CACHE_LIMIT {
-            m.retain(|_, (at, _)| at.elapsed() < CACHE_TTL);
+            m.retain(|_, (at, _)| at.elapsed() < ttl);
             if m.len() >= VQD_CACHE_LIMIT {
                 // Deterministic eviction: oldest timestamp first, key as
                 // tie-breaker (tokens fetched in a tight loop share an
@@ -138,9 +156,10 @@ impl EngineShared {
 
     /// Read the cached `sc` token if present and not expired.
     pub fn sc_get(&self) -> Option<String> {
+        let ttl = self.cache_ttl;
         let m = self.sc.read();
         m.as_ref()
-            .filter(|(at, _)| at.elapsed() < CACHE_TTL)
+            .filter(|(at, _)| at.elapsed() < ttl)
             .map(|(_, v)| v.clone())
     }
 
@@ -197,6 +216,9 @@ pub fn list() -> &'static [&'static dyn Engine] {
         &crate::engines::bing_videos::BingVideos,
         &crate::engines::brave_videos::BraveVideos,
         &crate::engines::annas_archive::AnnasArchive,
+        &crate::engines::github::GitHub,
+        &crate::engines::arxiv::ArXiv,
+        &crate::engines::archive_org::ArchiveOrg,
     ]
 }
 
@@ -208,6 +230,37 @@ pub fn engines_for(category: Category) -> Vec<&'static dyn Engine> {
         .copied()
         .filter(|e| e.category() == category)
         .collect()
+}
+
+/// The engine names requested via `opts.engines` (comma-split, trimmed,
+/// lowercased, empties dropped). Single parser behind [`resolve`] and
+/// [`unknown_engine_names`] so both agree on what was asked for.
+fn wanted_names(opts: &SearchOptions) -> Vec<String> {
+    opts.engines
+        .iter()
+        .flat_map(|e| e.split(','))
+        .map(|e| e.trim().to_ascii_lowercase())
+        .filter(|e| !e.is_empty())
+        .collect()
+}
+
+/// Names from `opts.engines` that match no registered engine for the
+/// category (after comma-splitting and lowercasing). [`resolve`] silently
+/// drops these; surfaces should warn so typos don't look like outages.
+pub fn unknown_engine_names(opts: &SearchOptions, category: Category) -> Vec<String> {
+    if opts.engines.is_empty() {
+        return Vec::new();
+    }
+    let wanted = wanted_names(opts);
+    let known: Vec<&str> = engines_for(category).iter().map(|e| e.name()).collect();
+    let mut unknown: Vec<String> = wanted
+        .into_iter()
+        .filter(|w| !known.contains(&w.as_str()))
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .collect();
+    unknown.sort();
+    unknown
 }
 
 /// Look up a registered engine by its exact name (e.g. `"duckduckgo"`,
@@ -229,12 +282,7 @@ pub fn resolve(opts: &SearchOptions, category: Category) -> Vec<&'static dyn Eng
     if opts.engines.is_empty() {
         all
     } else {
-        let wanted: Vec<String> = opts
-            .engines
-            .iter()
-            .flat_map(|e| e.split(','))
-            .map(|e| e.trim().to_ascii_lowercase())
-            .collect();
+        let wanted = wanted_names(opts);
         all.into_iter()
             .filter(|e| wanted.iter().any(|w| w == e.name()))
             .collect()
@@ -244,6 +292,26 @@ pub fn resolve(opts: &SearchOptions, category: Category) -> Vec<&'static dyn Eng
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unknown_engine_names_flags_typos() {
+        use crate::models::Category;
+        use crate::options::SearchOptions;
+        let mut opts = SearchOptions::new("x");
+        assert!(unknown_engine_names(&opts, Category::Web).is_empty());
+        opts.engines = vec!["bing, bign, duckduckgo".into()];
+        assert_eq!(
+            unknown_engine_names(&opts, Category::Web),
+            vec!["bign".to_string()]
+        );
+        // image-only names are unknown to the web category
+        opts.engines = vec!["bing_images".into()];
+        assert_eq!(
+            unknown_engine_names(&opts, Category::Web),
+            vec!["bing_images".to_string()]
+        );
+        assert!(unknown_engine_names(&opts, Category::Images).is_empty());
+    }
 
     #[test]
     fn vqd_cache_is_bounded() {
@@ -265,7 +333,7 @@ mod tests {
         let shared = EngineShared::new();
         shared.vqd_set("k", "v".into());
         // an entry stamped in the past is treated as expired
-        shared.vqd.write().get_mut("k").unwrap().0 = Instant::now() - CACHE_TTL * 2;
+        shared.vqd.write().get_mut("k").unwrap().0 = Instant::now() - shared.cache_ttl * 2;
         assert_eq!(shared.vqd_get("k"), None);
     }
 }

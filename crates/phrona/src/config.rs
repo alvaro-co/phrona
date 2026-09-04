@@ -177,6 +177,8 @@ pub struct SearchConfig {
     #[serde(default = "default_concurrency_limit")]
     pub concurrency_limit: usize,
     /// Cache TTL for engine-scoped token/state caches (seconds).
+    /// Applied to the DuckDuckGo `vqd` / Startpage `sc` token caches;
+    /// floored at 60s to avoid token-thrash.
     #[serde(default = "default_cache_ttl_secs")]
     pub cache_ttl_secs: u64,
 }
@@ -196,9 +198,10 @@ impl Default for SearchConfig {
 /// section of `phrona.yaml`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SecurityConfig {
-    /// Refuse to connect to private/loopback/link-local IPs. The core
-    /// extractor always enforces IP safety; this knob reserves future
-    /// surfaces that could relax it, and mirrors it for observability.
+    /// Refuse to connect to private/loopback/link-local IPs. Enforced on
+    /// every outbound target (initial URL and each redirect hop) via
+    /// [`crate::client::TargetPolicy`]; `false` is for intranet operators
+    /// only (DNS must still resolve).
     #[serde(default = "default_block_private_ips")]
     pub block_private_ips: bool,
     /// Optional allow-list of hostnames for outbound requests (empty = all).
@@ -231,9 +234,9 @@ pub struct EnginesConfig {
     /// per proxy, used round-robin. Empty = direct connections.
     #[serde(default)]
     pub proxies: Vec<String>,
-    /// Per-engine session cookies earned in a real browser (see the
-    /// `webrief` companion tool), sent as the engine's `Cookie` header on
-    /// every request. Needed by engines whose anti-bot grants trust only to
+    /// Per-engine session cookies earned in a real browser (see `phrona
+    /// bootstrap`), sent as the engine's `Cookie` header on every request.
+    /// Needed by engines whose anti-bot grants trust only to
     /// real sessions: google (`__Secure-ENID`), qwant (`datadome`),
     /// annas_archive (`aa_ddg_check`, `__ddg2_`). Values expire; refresh by
     /// re-capturing.
@@ -244,9 +247,10 @@ pub struct EnginesConfig {
     /// its cookies are missing/stale. Disable for fully static deployments.
     #[serde(default = "default_auto_bootstrap")]
     pub auto_bootstrap: bool,
-    /// Browser impersonation profile: chrome, chrome149, chrome140,
-    /// chrome131, chrome120, chrome100, firefox, firefox139, firefox148,
-    /// safari, safari26, edge, edge148, opera, opera131, okhttp, random.
+    /// Browser impersonation profile: chrome, chrome149, chrome148,
+    /// chrome140, chrome131, chrome120, chrome100, firefox, firefox148,
+    /// firefox139, safari, safari26, edge, edge148, opera, opera131,
+    /// okhttp, random.
     #[serde(default = "default_profile")]
     pub profile: String,
 }
@@ -302,22 +306,26 @@ impl PhronaConfig {
     /// Resolve the configuration: `$PHRONA_CONFIG_PATH` when set (must
     /// exist), else `./phrona.yaml` in the working directory when present,
     /// else defaults; then apply environment variable overrides.
+    /// Environment overrides are applied exactly once (file loads already
+    /// apply them, so they are skipped on that path).
     pub fn load() -> std::result::Result<Self, ConfigError> {
-        let mut cfg = match std::env::var(CONFIG_PATH_ENV) {
+        match std::env::var(CONFIG_PATH_ENV) {
             Ok(path) if !path.is_empty() => {
                 let p = PathBuf::from(path);
                 if !p.is_file() {
                     return Err(ConfigError::MissingFile(p));
                 }
-                Self::load_from_file(&p)?
+                Self::load_from_file(&p)
             }
             _ => match Path::new(DEFAULT_CONFIG_FILE).try_exists() {
-                Ok(true) => Self::load_from_file(Path::new(DEFAULT_CONFIG_FILE))?,
-                _ => Self::defaults(),
+                Ok(true) => Self::load_from_file(Path::new(DEFAULT_CONFIG_FILE)),
+                _ => {
+                    let mut cfg = Self::defaults();
+                    cfg.apply_real_env()?;
+                    Ok(cfg)
+                }
             },
-        };
-        cfg.apply_real_env()?;
-        Ok(cfg)
+        }
     }
 
     /// Apply the real process environment: every variable in
@@ -332,8 +340,20 @@ impl PhronaConfig {
 
     /// Apply explicit overrides given as `(variable name, value)` pairs.
     /// Pure (no process environment access) so it is unit-testable and
-    /// embeddable. An empty `PHRONA_API_KEY` clears the key.
+    /// embeddable. An empty `PHRONA_API_KEY` clears the key. Applied
+    /// atomically: a bad value leaves the config untouched instead of
+    /// half-applied.
     pub fn apply_env_overrides(
+        &mut self,
+        overrides: &[(String, String)],
+    ) -> std::result::Result<(), ConfigError> {
+        let mut staged = self.clone();
+        staged.apply_env_overrides_inner(overrides)?;
+        *self = staged;
+        Ok(())
+    }
+
+    fn apply_env_overrides_inner(
         &mut self,
         overrides: &[(String, String)],
     ) -> std::result::Result<(), ConfigError> {

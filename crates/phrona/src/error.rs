@@ -207,6 +207,52 @@ impl Error {
     pub fn kind(&self) -> &ErrorKind {
         &self.kind
     }
+
+    /// Fixed SSRF-guard contexts. These double as the recovery vocabulary
+    /// for [`From<wreq::Error>`]: a policy refusal boxed by the transport
+    /// is recognized by its context and rebuilt with its classification.
+    /// Private/loopback/link-local destination refused.
+    pub const SSRF_PRIVATE_IP: &'static str =
+        "SSRF blocked: IP address is in a private/restricted range";
+    /// Destination refused by the domain allow/deny policy.
+    pub const SSRF_DOMAIN_POLICY: &'static str =
+        "target host is blocked by the domain allow/deny policy";
+    /// Non-`http(s)` URL scheme refused.
+    pub const SSRF_SCHEME: &'static str = "unsupported URL scheme (http/https only)";
+    /// URL without a host refused.
+    pub const SSRF_NO_HOST: &'static str = "URL has no host";
+    /// Hostname did not resolve.
+    pub const SSRF_DNS: &'static str = "host resolution failed";
+
+    /// Rebuild a policy refusal from a transport-boxed Display string, if
+    /// it carries one of the fixed [`Error::SSRF_*`] contexts.
+    fn from_policy_display(display: &str) -> Option<Self> {
+        let context = [
+            Self::SSRF_PRIVATE_IP,
+            Self::SSRF_DOMAIN_POLICY,
+            Self::SSRF_SCHEME,
+            Self::SSRF_NO_HOST,
+            Self::SSRF_DNS,
+        ]
+        .into_iter()
+        .find(|c| display.contains(c))?;
+        Some(Error::invalid_query("client", context))
+    }
+
+    /// Whether this failure may be fixed by a fresh browser session: an
+    /// anti-bot block or a transport failure, both of which the silent
+    /// session-refresh path knows how to retry. Used by the orchestrator
+    /// to pick refresh candidates without string-matching labels.
+    pub fn may_require_session(&self) -> bool {
+        self.kind.may_require_session()
+    }
+}
+
+impl ErrorKind {
+    /// See [`Error::may_require_session`].
+    pub fn may_require_session(&self) -> bool {
+        matches!(self, ErrorKind::Blocked(_) | ErrorKind::NetworkFailure)
+    }
 }
 
 impl fmt::Display for ErrorKind {
@@ -253,13 +299,38 @@ impl fmt::Display for Error {
 impl std::error::Error for Error {}
 
 impl From<std::io::Error> for Error {
-    fn from(_e: std::io::Error) -> Self {
-        Error::internal("io", "i/o failure")
+    fn from(e: std::io::Error) -> Self {
+        // `context` is static, so map the I/O kind to a fixed label
+        // instead of dropping it.
+        use std::io::ErrorKind as IoKind;
+        let context = match e.kind() {
+            IoKind::NotFound => "file not found",
+            IoKind::PermissionDenied => "permission denied",
+            IoKind::ConnectionRefused => "connection refused",
+            IoKind::ConnectionReset | IoKind::BrokenPipe => "connection reset",
+            IoKind::TimedOut => "i/o timed out",
+            _ => "i/o failure",
+        };
+        Error::internal("io", context)
     }
 }
 
 impl From<wreq::Error> for Error {
     fn from(e: wreq::Error) -> Self {
+        // Policy errors from the SSRF redirect guard (our own `Error`)
+        // round-trip through wreq boxed, and `dyn Error` cannot be
+        // downcast on stable. Recover them by their fixed contexts so a
+        // blocked redirect hop keeps its classification instead of
+        // degrading to a generic internal failure.
+        if e.is_redirect() {
+            let mut next = std::error::Error::source(&e);
+            while let Some(s) = next {
+                if let Some(recovered) = Error::from_policy_display(&s.to_string()) {
+                    return recovered;
+                }
+                next = std::error::Error::source(s);
+            }
+        }
         if e.is_timeout() {
             Error::timeout("client")
         } else if e.is_connect() || e.is_connection_reset() {
@@ -303,6 +374,26 @@ mod tests {
 
         let e = Error::internal("client", "build failed");
         assert_eq!(e.scope(), ErrorScope::Internal);
+    }
+
+    #[test]
+    fn policy_refusals_survive_transport_boxing() {
+        // The SSRF redirect guard boxes our Error through wreq; recovery
+        // keys off the fixed contexts, so every refusal must round-trip.
+        for context in [
+            Error::SSRF_PRIVATE_IP,
+            Error::SSRF_DOMAIN_POLICY,
+            Error::SSRF_SCHEME,
+            Error::SSRF_NO_HOST,
+            Error::SSRF_DNS,
+        ] {
+            let original = Error::invalid_query("client", context);
+            let boxed = original.to_string();
+            let recovered = Error::from_policy_display(&boxed).expect("fixed context must recover");
+            assert_eq!(recovered.scope(), ErrorScope::Query);
+            assert_eq!(recovered.kind(), original.kind());
+        }
+        assert!(Error::from_policy_display("rate limited").is_none());
     }
 
     #[test]

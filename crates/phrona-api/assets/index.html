@@ -5,7 +5,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Phrona</title>
-<meta name="description" content="Privacy-friendly metasearch across 26 engines.">
+<meta name="description" content="Privacy-friendly metasearch across 29 engines.">
 <link rel="stylesheet" href="/style.css">
 </head>
 <body>
@@ -39,6 +39,9 @@
         <button class="chip" data-cat="news">News</button>
         <button class="chip" data-cat="videos">Videos</button>
         <button class="chip" data-cat="books">Books</button>
+        <button class="chip" data-cat="code">Code</button>
+        <button class="chip" data-cat="papers">Papers</button>
+        <button class="chip" data-cat="archives">Archives</button>
       </div>
       <div class="param-row">
         <input id="region" class="text-input" placeholder="region (us-en)" autocomplete="off">
@@ -85,7 +88,7 @@
   <!-- ===================== TOOLS ===================== -->
   <section id="view-tools" hidden>
     <h1 class="page-title">Tools</h1>
-    <p class="page-sub">The same operations as the <code>ms</code> CLI, in the browser — against the live API.</p>
+    <p class="page-sub">The same operations as the <code>phrona</code> CLI, in the browser — against the live API.</p>
     <nav class="tabs tool-tabs" id="tool-tabs">
       <button class="tab active" data-tool="suggest">suggest</button>
       <button class="tab" data-tool="extract">extract</button>
@@ -127,7 +130,8 @@
         <select class="select" data-f="category">
           <option value="web">web</option><option value="images">images</option>
           <option value="news">news</option><option value="videos">videos</option>
-          <option value="books">books</option>
+          <option value="books">books</option><option value="code">code</option>
+          <option value="papers">papers</option><option value="archives">archives</option>
         </select>
         <select class="select" data-f="time_range">
           <option value="">any time</option>
@@ -146,7 +150,8 @@
           <option value="">all categories</option>
           <option value="web">web</option><option value="images">images</option>
           <option value="news">news</option><option value="videos">videos</option>
-          <option value="books">books</option>
+          <option value="books">books</option><option value="code">code</option>
+          <option value="papers">papers</option><option value="archives">archives</option>
         </select>
         <button class="raised-btn small">Run</button>
         <label class="check"><input type="checkbox" class="json-check">JSON</label>
@@ -161,7 +166,8 @@
           <option value="">all categories</option>
           <option value="web">web</option><option value="images">images</option>
           <option value="news">news</option><option value="videos">videos</option>
-          <option value="books">books</option>
+          <option value="books">books</option><option value="code">code</option>
+          <option value="papers">papers</option><option value="archives">archives</option>
         </select>
         <input class="text-input narrow" type="number" min="1" max="10" value="5" title="max results" data-f="max_results">
         <button class="raised-btn small">Run</button>

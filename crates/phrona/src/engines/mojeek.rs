@@ -62,11 +62,7 @@ impl Mojeek {
 
     /// Fetch the SERP, transparently solving the ALTCHA challenge and
     /// retrying once when the challenge page is served.
-    async fn fetch(
-        &self,
-        ctx: &EngineContext<'_>,
-        url: &str,
-    ) -> Result<std::borrow::Cow<'static, str>> {
+    async fn fetch(&self, ctx: &EngineContext<'_>, url: &str) -> Result<String> {
         // NOTE: no manual Cookie header here - an explicit Cookie value
         // replaces the jar for that request in wreq, which would drop the
         // `chllg` clearance cookie right after the ALTCHA dance. Locale
@@ -83,7 +79,7 @@ impl Mojeek {
             let body = util::read_body(resp, self.name()).await?;
             text = String::from_utf8_lossy(&body).into_owned();
         }
-        Ok(std::borrow::Cow::Owned(text))
+        Ok(text)
     }
 }
 
@@ -113,7 +109,12 @@ pub(crate) async fn solve_challenge(ctx: &EngineContext<'_>) -> Result<()> {
     let json: serde_json::Value = serde_json::from_slice(&bytes)
         .map_err(|_| crate::error::Error::schema(ENGINE, "invalid ALTCHA challenge JSON"))?;
     let challenge = altcha::Challenge::parse(&json).ok_or_else(|| altcha::blocked_error(ENGINE))?;
-    let Some((counter, derived)) = challenge.solve() else {
+    // CPU-bound proof-of-work: keep it off the async worker threads
+    let worker = challenge.clone();
+    let solved = tokio::task::spawn_blocking(move || worker.solve())
+        .await
+        .map_err(|_| altcha::blocked_error(ENGINE))?;
+    let Some((counter, derived)) = solved else {
         return Err(altcha::blocked_error(ENGINE));
     };
     let payload =

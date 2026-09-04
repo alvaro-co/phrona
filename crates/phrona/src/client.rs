@@ -17,12 +17,25 @@ use crate::extract::is_safe_ip;
 /// (extract URLs and each redirect hop). `denied` wins over `allowed`; an
 /// empty `allowed` list permits any host. Matching is case-insensitive and
 /// covers subdomains (e.g. `example.com` matches `www.example.com`).
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct TargetPolicy {
     /// Domains always allowed; empty permits any host.
     pub allowed: Vec<String>,
     /// Domains always denied; denied wins over allowed.
     pub denied: Vec<String>,
+    /// Refuse private/loopback/link-local destinations (SSRF guard).
+    /// `false` is for intranet operators only; default `true`.
+    pub block_private: bool,
+}
+
+impl Default for TargetPolicy {
+    fn default() -> Self {
+        Self {
+            allowed: Vec::new(),
+            denied: Vec::new(),
+            block_private: true,
+        }
+    }
 }
 
 impl TargetPolicy {
@@ -32,6 +45,7 @@ impl TargetPolicy {
         Self {
             allowed: sec.allowed_domains.clone(),
             denied: sec.denied_domains.clone(),
+            block_private: sec.block_private_ips,
         }
     }
 
@@ -69,38 +83,41 @@ fn parse_host_ip(host: &str) -> Option<IpAddr> {
 pub(crate) async fn validate_target(uri: &Uri, policy: &TargetPolicy) -> Result<()> {
     let scheme = uri.scheme_str().unwrap_or("");
     if scheme != "http" && scheme != "https" {
-        return Err(Error::invalid_query(
-            "client",
-            "unsupported URL scheme (http/https only)",
-        ));
+        return Err(Error::invalid_query("client", Error::SSRF_SCHEME));
     }
     let host = uri
         .host()
-        .ok_or_else(|| Error::invalid_query("client", "URL has no host"))?;
+        .ok_or_else(|| Error::invalid_query("client", Error::SSRF_NO_HOST))?;
     if !policy.domain_allowed(host) {
-        return Err(Error::invalid_query(
-            "client",
-            "target host is blocked by the domain allow/deny policy",
-        ));
+        return Err(Error::invalid_query("client", Error::SSRF_DOMAIN_POLICY));
     }
     let port = uri
         .port_u16()
         .unwrap_or(if scheme == "https" { 443 } else { 80 });
-    let safe = if let Some(ip) = parse_host_ip(host) {
+    // Intranet operators may disable the guard via
+    // `security.block_private_ips: false`; DNS still has to resolve.
+    let safe = if !policy.block_private {
+        if parse_host_ip(host).is_none() {
+            let mut addrs = tokio::net::lookup_host((host, port))
+                .await
+                .map_err(|_| Error::invalid_query("client", Error::SSRF_DNS))?;
+            if addrs.next().is_none() {
+                return Err(Error::invalid_query("client", Error::SSRF_DNS));
+            }
+        }
+        true
+    } else if let Some(ip) = parse_host_ip(host) {
         is_safe_ip(ip)
     } else {
         let addrs = tokio::net::lookup_host((host, port))
             .await
-            .map_err(|_| Error::invalid_query("client", "host resolution failed"))?;
+            .map_err(|_| Error::invalid_query("client", Error::SSRF_DNS))?;
         addrs.into_iter().all(|sa| is_safe_ip(sa.ip()))
     };
     if safe {
         Ok(())
     } else {
-        Err(Error::invalid_query(
-            "client",
-            "SSRF blocked: IP address is in a private/restricted range",
-        ))
+        Err(Error::invalid_query("client", Error::SSRF_PRIVATE_IP))
     }
 }
 
@@ -163,6 +180,30 @@ pub enum Profile {
 }
 
 impl Profile {
+    /// Every name accepted by [`Profile::from_name`], in a stable order.
+    /// Single source of truth for help texts and error messages so a new
+    /// profile cannot leave a stale list behind.
+    pub const ALL_NAMES: [&'static str; 18] = [
+        "chrome",
+        "chrome100",
+        "chrome120",
+        "chrome131",
+        "chrome140",
+        "chrome148",
+        "chrome149",
+        "firefox",
+        "firefox139",
+        "firefox148",
+        "safari",
+        "safari26",
+        "edge",
+        "edge148",
+        "opera",
+        "opera131",
+        "okhttp",
+        "random",
+    ];
+
     /// Resolve a lowercase profile name (family names and versioned
     /// variants as used by `phrona.yaml` / `PHRONA_ENGINES_PROFILE`).
     pub fn from_name(name: &str) -> Option<Self> {
@@ -186,7 +227,10 @@ impl Profile {
 
     fn to_emulation(self) -> Emulation {
         use wreq_util::Profile as P;
-        let profile = match self {
+        // `Random` is resolved to one concrete family at build time (see
+        // `resolve_random`), so the UA header and the fingerprint always
+        // pair; reaching this arm means someone constructed it directly.
+        let profile = match self.resolve_random() {
             Profile::Chrome => P::Chrome148,
             Profile::Chrome100 => P::Chrome100,
             Profile::Chrome120 => P::Chrome120,
@@ -203,19 +247,45 @@ impl Profile {
             Profile::Opera => P::Opera131,
             Profile::Opera131 => P::Opera131,
             Profile::OkHttp => P::OkHttp5,
-            Profile::Random => return Emulation::random(),
+            // unreachable: `resolve_random` above already picked a family
+            Profile::Random => P::Chrome148,
         };
         Emulation::builder().profile(profile).build()
+    }
+
+    /// Resolve [`Profile::Random`] to one concrete family, drawn uniformly.
+    /// Builders call this once so the UA header and the TLS fingerprint
+    /// describe the same browser instead of two independent draws.
+    pub fn resolve_random(self) -> Self {
+        if !matches!(self, Profile::Random) {
+            return self;
+        }
+        use rand::RngExt;
+        match rand::rng().random_range(0..5) {
+            0 => Profile::Chrome,
+            1 => Profile::Firefox,
+            2 => Profile::Safari,
+            3 => Profile::Edge,
+            _ => Profile::Opera,
+        }
     }
 }
 
 /// Browser User-Agent strings matching the TLS/HTTP2 impersonation profiles
-/// of [`Profile`]. Variants of a family (versioned profiles) use the family
-/// UA; [`Profile::Random`] picks a fresh random family UA on every call so
-/// each client instance rotates instead of sharing one process-global UA.
+/// of [`Profile`]. Each versioned variant carries its own UA so the header
+/// never contradicts the fingerprint; [`Profile::Random`] picks a fresh
+/// random family UA on every call so each client instance rotates instead
+/// of sharing one process-global UA.
 const UA_CHROME: &str = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36";
+const UA_CHROME100: &str = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/100.0.4896.127 Safari/537.36";
+const UA_CHROME120: &str = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+const UA_CHROME131: &str = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+const UA_CHROME140: &str = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36";
+const UA_CHROME149: &str = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36";
 const UA_FIREFOX: &str =
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:148.0) Gecko/20100101 Firefox/148.0";
+const UA_FIREFOX139: &str =
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:139.0) Gecko/20100101 Firefox/139.0";
 const UA_SAFARI: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.4 Safari/605.1.15";
 const UA_EDGE: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36 Edg/148.0.0.0";
 const UA_OPERA: &str = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36 OPR/134.0.0.0";
@@ -225,7 +295,8 @@ const UA_POOL: [&str; 5] = [UA_CHROME, UA_FIREFOX, UA_SAFARI, UA_EDGE, UA_OPERA]
 /// UA for a browser profile, matching the exact TLS impersonation family.
 pub fn default_user_agent(profile: Profile) -> &'static str {
     match profile {
-        Profile::Firefox | Profile::Firefox139 | Profile::Firefox148 => UA_FIREFOX,
+        Profile::Firefox | Profile::Firefox148 => UA_FIREFOX,
+        Profile::Firefox139 => UA_FIREFOX139,
         Profile::Safari | Profile::Safari26 => UA_SAFARI,
         Profile::Edge | Profile::Edge148 => UA_EDGE,
         Profile::Opera | Profile::Opera131 => UA_OPERA,
@@ -236,13 +307,12 @@ pub fn default_user_agent(profile: Profile) -> &'static str {
             use rand::RngExt;
             UA_POOL[rand::rng().random_range(0..UA_POOL.len())]
         }
-        // Chrome and all versioned Chrome variants.
-        Profile::Chrome
-        | Profile::Chrome100
-        | Profile::Chrome120
-        | Profile::Chrome131
-        | Profile::Chrome140
-        | Profile::Chrome149 => UA_CHROME,
+        Profile::Chrome => UA_CHROME,
+        Profile::Chrome100 => UA_CHROME100,
+        Profile::Chrome120 => UA_CHROME120,
+        Profile::Chrome131 => UA_CHROME131,
+        Profile::Chrome140 => UA_CHROME140,
+        Profile::Chrome149 => UA_CHROME149,
     }
 }
 
@@ -443,8 +513,10 @@ impl Default for HttpClientBuilder {
 
 impl HttpClientBuilder {
     /// Set the browser impersonation profile; the User-Agent header is kept
-    /// in lockstep with the TLS/HTTP2 fingerprint.
+    /// in lockstep with the TLS/HTTP2 fingerprint. [`Profile::Random`] is
+    /// resolved once here so header and fingerprint pair up.
     pub fn profile(mut self, profile: Profile) -> Self {
+        let profile = profile.resolve_random();
         self.profile = profile;
         // keep the UA in lockstep with the TLS/HTTP2 impersonation profile
         self.headers.insert(
@@ -457,6 +529,21 @@ impl HttpClientBuilder {
     /// Set the per-request timeout (default 10s).
     pub fn timeout(mut self, timeout: Duration) -> Self {
         self.timeout = timeout;
+        self
+    }
+
+    /// Enable or disable the persistent cookie jar (default on). Disable
+    /// for stateless one-shot clients that must not retain anything
+    /// between requests (note: challenge flows such as Mojeek's ALTCHA
+    /// need the jar to keep their clearance cookie).
+    pub fn cookies(mut self, enabled: bool) -> Self {
+        self.cookies = enabled;
+        self
+    }
+
+    /// Cap followed redirects (default 10 hops).
+    pub fn redirects(mut self, redirects: usize) -> Self {
+        self.redirects = redirects.max(1);
         self
     }
 
@@ -559,12 +646,14 @@ mod tests {
     #[test]
     fn default_user_agent_matches_family() {
         assert!(default_user_agent(Profile::Firefox).contains("Firefox/"));
-        assert!(default_user_agent(Profile::Firefox139).contains("Firefox/"));
-        assert!(default_user_agent(Profile::Firefox148).contains("Firefox/"));
+        assert!(default_user_agent(Profile::Firefox139).contains("Firefox/139."));
+        assert!(default_user_agent(Profile::Firefox148).contains("Firefox/148."));
         assert!(default_user_agent(Profile::Safari).contains("Safari/"));
         assert!(default_user_agent(Profile::Safari26).contains("Version/"));
         assert!(default_user_agent(Profile::Chrome).contains("Chrome/"));
-        assert!(default_user_agent(Profile::Chrome100).contains("Chrome/"));
+        assert!(default_user_agent(Profile::Chrome100).contains("Chrome/100."));
+        assert!(default_user_agent(Profile::Chrome120).contains("Chrome/120."));
+        assert!(default_user_agent(Profile::Chrome131).contains("Chrome/131."));
         assert!(default_user_agent(Profile::Edge).contains("Edg/"));
         assert!(default_user_agent(Profile::Opera).contains("OPR/"));
         assert!(default_user_agent(Profile::OkHttp).starts_with("okhttp/"));
@@ -584,6 +673,10 @@ mod tests {
         assert!(UA_POOL.contains(&r1));
         assert!(UA_POOL.contains(&r2));
         assert!(draws.iter().all(|ua| UA_POOL.contains(ua)));
+        // `Random` resolves once to a concrete family so the UA header and
+        // the TLS fingerprint always describe the same browser.
+        assert!(!matches!(Profile::Random.resolve_random(), Profile::Random));
+        assert!(matches!(Profile::Chrome.resolve_random(), Profile::Chrome));
     }
 
     #[test]
@@ -591,6 +684,7 @@ mod tests {
         let policy = TargetPolicy {
             allowed: vec!["Example.com".into()],
             denied: vec!["evil.example.com".into()],
+            ..Default::default()
         };
         assert!(policy.domain_allowed("example.com"));
         assert!(policy.domain_allowed("WWW.EXAMPLE.COM"));
@@ -603,6 +697,7 @@ mod tests {
         let deny_only = TargetPolicy {
             allowed: vec![],
             denied: vec!["blocked.org".into()],
+            ..Default::default()
         };
         assert!(!deny_only.domain_allowed("blocked.org"));
         assert!(!deny_only.domain_allowed("www.blocked.org"));
@@ -614,6 +709,7 @@ mod tests {
         let policy = TargetPolicy {
             allowed: vec![],
             denied: vec!["denied.example".into()],
+            ..Default::default()
         };
         let client = HttpClient::builder().target_policy(policy).build().unwrap();
         let err = crate::extract::extract(&client, "http://denied.example/page", 2000, None)

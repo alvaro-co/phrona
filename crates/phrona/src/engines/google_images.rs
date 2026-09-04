@@ -31,7 +31,10 @@ impl Engine for GoogleImages {
             ("tbm", "isch".into()),
             ("hl", lang.clone()),
             ("asearch", "isch".into()),
-            ("async", format!("_fmt:json,p:1,ijn:{}", opts.page - 1)),
+            (
+                "async",
+                format!("_fmt:json,p:1,ijn:{}", opts.page.saturating_sub(1)),
+            ),
             ("safe", safe_param(opts.safesearch).into()),
         ];
         if opts.region.is_some() {
@@ -42,8 +45,9 @@ impl Engine for GoogleImages {
         }
         let url = parse::with_query("https://www.google.com/search", params);
         let mut headers = wreq::header::HeaderMap::new();
-        // consent cookie (+ operator bootstrap session cookies, if any)
-        if let Some(c) = merged_cookie(ctx, self.name(), GOOGLE_CONSENT_COOKIE) {
+        // consent cookie (+ operator bootstrap session cookies, if any).
+        // keyed under "google": one operator session serves both engines.
+        if let Some(c) = merged_cookie(ctx, "google", GOOGLE_CONSENT_COOKIE) {
             if let Ok(v) = wreq::header::HeaderValue::from_str(&c) {
                 headers.insert(wreq::header::COOKIE, v);
             }
@@ -73,12 +77,15 @@ fn looks_blocked(text: &str) -> bool {
 }
 
 /// Parse a Google images `ischj` JSON payload (embedded in the search page
-/// text) into [`RawResult`] items.
+/// text) into [`RawResult`] items. A streaming deserializer reads the
+/// first JSON value only, so trailing page HTML cannot fail the parse.
 pub fn parse_google_images(text: &str, engine: &str) -> Vec<RawResult> {
     let Some(start) = text.find("{\"ischj\":") else {
         return Vec::new();
     };
-    let Ok(json) = serde_json::from_str::<serde_json::Value>(&text[start..]) else {
+    let mut stream =
+        serde_json::Deserializer::from_str(&text[start..]).into_iter::<serde_json::Value>();
+    let Some(Ok(json)) = stream.next() else {
         return Vec::new();
     };
     let mut out = Vec::new();
@@ -114,12 +121,15 @@ pub fn parse_google_images(text: &str, engine: &str) -> Vec<RawResult> {
             .pointer("/original_image/height")
             .and_then(|v| v.as_u64())
             .unwrap_or(0) as u32;
-        let mut source = item
+        // looked up once: feeds both `source` (when no site title) and
+        // `description`
+        let snippet = item
             .get("text_in_grid")
             .and_then(|t| t.get("snippet"))
             .and_then(|s| s.as_str())
             .unwrap_or("")
             .to_string();
+        let mut source = snippet.clone();
         if let Some(site) = result.get("site_title").and_then(|s| s.as_str()) {
             source = site.to_string();
         }
@@ -136,12 +146,7 @@ pub fn parse_google_images(text: &str, engine: &str) -> Vec<RawResult> {
             width,
             height,
             source,
-            description: item
-                .get("text_in_grid")
-                .and_then(|t| t.get("snippet"))
-                .and_then(|s| s.as_str())
-                .unwrap_or("")
-                .to_string(),
+            description: snippet,
             engine: engine.to_string(),
             position: i as u32 + 1,
             ..Default::default()

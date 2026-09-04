@@ -110,7 +110,9 @@ async fn engines_lists_all_categories() {
     let router = key_router();
     let (status, json, _) = get(&router, "/v1/engines").await;
     assert_eq!(status, StatusCode::OK);
-    for cat in ["web", "images", "news", "videos"] {
+    for cat in [
+        "web", "images", "news", "videos", "books", "code", "papers", "archives",
+    ] {
         assert!(json[cat].is_array(), "missing category {cat}");
     }
     let web = json["web"]
@@ -120,6 +122,15 @@ async fn engines_lists_all_categories() {
         .filter_map(|v| v.as_str())
         .collect::<Vec<_>>();
     assert!(web.contains(&"marginalia"));
+    assert!(
+        json["code"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|v| v.as_str())
+            .collect::<Vec<_>>()
+            .contains(&"github")
+    );
 }
 
 #[tokio::test]

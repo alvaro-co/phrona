@@ -14,13 +14,15 @@ milliseconds.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `PHRONA_ADDR` | `127.0.0.1:8080` | bind address |
-| `PHRONA_API_KEY` | unset | if set, `/v1/*` (except `/health`) and `/search` require a key |
+| `PHRONA_SERVER_BIND_ADDR` | `127.0.0.1:8080` | bind address (`PHRONA_ADDR` also honored as a legacy alias) |
+| `PHRONA_API_KEY` | unset | if set, `/v1/*` (except public routes) and `/search` require a key |
 | `RUST_LOG` | `info` | tracing level (use `debug` for detail) |
 
-When a key is set, clients authenticate with the header
-`Authorization: Bearer <key>`, the header `x-api-key: <key>`, the query
-parameter `api_key=...` or the JSON field `"api_key": "..."`.
+Public without a key: `/`, `/health`, `/v1/engines`, `/metrics`. When a
+key is set, clients authenticate with the header
+`Authorization: Bearer <key>`, the header `x-api-key: <key>` or the JSON
+field `"api_key": "..."` on POST routes. A query-string `api_key` is
+rejected with 400 (credentials in URLs leak through logs and proxies).
 
 ## GET /
 
@@ -30,7 +32,7 @@ The web frontend (single page: Search + Tools tabs). See
 ## GET /health
 
 ```json
-{"status":"ok","version":"0.2.0","engines":{"web":12,"images":6,"news":4,"videos":3,"books":1},"uptime_s":42,"auth":false}
+{"status":"ok","version":"0.2.0","engines":{"web":12,"images":6,"news":4,"videos":3,"books":1,"code":1,"papers":1,"archives":1},"uptime_s":42,"auth":false}
 ```
 
 No auth required.
@@ -38,7 +40,7 @@ No auth required.
 ## GET /v1/engines
 
 Optional `category` query parameter (`web | images | news | videos |
-books`; default: all categories). Returns a map of category to engine
+books | code | papers | archives`; default: all categories). Returns a map of category to engine
 names, in priority order:
 
 ```json
@@ -47,7 +49,10 @@ names, in priority order:
   "images": ["duckduckgo_images", "bing_images", "brave_images", "startpage_images", "mojeek_images", "google_images"],
   "news": ["duckduckgo_news", "bing_news", "yahoo_news", "brave_news"],
   "videos": ["duckduckgo_videos", "bing_videos", "brave_videos"],
-  "books": ["annas_archive"]
+  "books": ["annas_archive"],
+  "code": ["github"],
+  "papers": ["arxiv"],
+  "archives": ["archive_org"]
 }
 ```
 
@@ -61,7 +66,7 @@ Query parameters:
 | Param | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `q` | string | required | the query |
-| `category` | string | `web` | `web`, `images`, `news`, `videos`, `books` |
+| `category` | string | `web` | `web`, `images`, `news`, `videos`, `books`, `code`, `papers`, `archives` |
 | `engines` | string | all of category | comma-separated engine names |
 | `page` | uint | 1 | result page |
 | `max_results` | uint | 20 | max merged results to return (1-100) |
@@ -104,10 +109,10 @@ Response:
 Result fields by type:
 
 - web: title, url, description, score, position, engines
-- image: title, url, image_url, thumbnail_url, width, height, score, position, engines
-- news: title, url, description, published, source, score, position, engines
-- video: title, url, description, thumbnail_url, duration, views, uploader, score, position, engines
-- book: title, url, description, author, publisher, score, position, engines
+- image: title, url, image_url, thumbnail_url, width, height, source, score, position, engines
+- news: title, url, description, published, source, image_url, score, position, engines
+- video: title, url, description, duration, published, uploader, views, thumbnail_url, score, position, engines
+- book: title, url, info, author, publisher, score, position, engines
 
 Errors: HTTP 400 (bad params, e.g. unknown category or engine, or an error
 with `Query` scope), 401 (auth required / wrong key), 429 (rate limited),
@@ -162,7 +167,7 @@ every engine failed.
 | Param | Default | Meaning |
 | --- | --- | --- |
 | `query` | `rust programming` | probe query |
-| `category` | all categories | `web`, `images`, `news`, `videos`, `books` |
+| `category` | all categories | `web`, `images`, `news`, `videos`, `books`, `code`, `papers`, `archives` |
 | `max_results` | `5` | merged results per category (1-10) |
 
 Response: an array of per-category reports.
@@ -278,5 +283,5 @@ endpoint and MCP `search_grounded`.
 
 The static app lives in `crates/phrona-api/assets/` and is served
 without embedding: edit `assets/index.html`, `assets/style.css`,
-`frontend/app.js` and restart the server - no rebuild needed. The fallback
+`assets/app.js` and restart the server - no rebuild needed. The fallback
 serves index.html for any other path.

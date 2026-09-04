@@ -21,8 +21,8 @@
 //!
 //! ## What it offers
 //!
-//! - **Multi-engine search** over 26 providers across 5 categories (web,
-//!   images, news, videos, books): [`search()`], [`SearchClient`].
+//! - **Multi-engine search** over 29 providers across 8 categories (web,
+//!   images, news, videos, books, code, papers, archives): [`search()`], [`SearchClient`].
 //! - **Browser impersonation** (TLS + HTTP/2 fingerprints and matching
 //!   User-Agents), per profile and proxy: [`Profile`], [`HttpClient`].
 //! - **Merging, deduplication and ranking**: [`dedup`], [`rank`].

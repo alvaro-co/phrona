@@ -96,7 +96,7 @@ const restoreLocation = () => {
   $("q").value = p.get("q");
   $("clear-btn").hidden = false;
   const cat = p.get("category");
-  if (["web", "images", "news", "videos", "books"].includes(cat)) {
+  if (["web", "images", "news", "videos", "books", "code", "papers", "archives"].includes(cat)) {
     state.category = cat;
     qsa("#category-row .chip").forEach((c) => c.classList.toggle("active", c.dataset.cat === cat));
   }

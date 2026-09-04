@@ -30,7 +30,10 @@ impl Engine for Qwant {
             SafeSearch::Moderate => "1",
             SafeSearch::Off => "0",
         };
-        let tgp = util_random_tgp();
+        let tgp = {
+            use rand::RngExt;
+            rand::rng().random_range(1..=3).to_string()
+        };
         let url = parse::with_query(
             "https://api.qwant.com/v3/search/web",
             [
@@ -58,11 +61,6 @@ impl Engine for Qwant {
             wreq::header::ORIGIN,
             wreq::header::HeaderValue::from_static("https://www.qwant.com"),
         );
-        if let Some(c) = ctx.shared.bootstrap_for(self.name()) {
-            if let Ok(v) = wreq::header::HeaderValue::from_str(&c) {
-                headers.insert(wreq::header::COOKIE, v);
-            }
-        }
         // operator-provided session cookie (config `bootstrap_cookies`,
         // `--cookie qwant=...`, or the local harvest cache). Pure HTTP:
         // this engine never launches a browser on its own.
@@ -77,7 +75,7 @@ impl Engine for Qwant {
         let json: serde_json::Value = crate::engines::util::parse_json_body(self.name(), &body)?;
         if json.get("status").and_then(|s| s.as_str()) != Some("success") {
             let err = json.get("error_code").and_then(|e| e.as_i64()).unwrap_or(0);
-            if err == 24 {
+            if err == QWANT_RATE_LIMIT_CODE {
                 return Err(Error::rate_limited(self.name(), None));
             }
             if json.get("url").is_some() {
@@ -89,10 +87,8 @@ impl Engine for Qwant {
     }
 }
 
-fn util_random_tgp() -> String {
-    use rand::RngExt;
-    (rand::rng().random_range(1..=3)).to_string()
-}
+/// Qwant's rate-limit signal inside a non-`success` payload.
+const QWANT_RATE_LIMIT_CODE: i64 = 24;
 
 /// Parse a Qwant API v3 JSON response into [`RawResult`] items.
 pub fn parse_qwant(json: &serde_json::Value, engine: &str) -> Vec<RawResult> {

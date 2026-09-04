@@ -39,9 +39,13 @@ async fn main() -> Result<()> {
         profile,
         Some(timeout),
         (!proxies.is_empty()).then_some(proxies),
-        phrona::TargetPolicy::default(),
+        phrona::TargetPolicy::from_security(&cfg.security),
     )?
-    .with_auto_bootstrap(cli.auto_bootstrap || cfg.engines.auto_bootstrap);
+    .with_auto_bootstrap(cli.auto_bootstrap || cfg.engines.auto_bootstrap)
+    // the config path applies these inside `with_config`; the CLI builds
+    // via `with_options`, so they are applied here instead of ignored
+    .with_concurrency(cfg.search.concurrency_limit)
+    .with_cache_ttl(cfg.search.cache_ttl_secs);
     // config-provided bootstrap cookies first, then --cookie overrides
     for (engine, cookies) in cfg.bootstrap_cookies() {
         client = client.with_bootstrap_cookie(engine.clone(), cookies.clone());
@@ -62,7 +66,10 @@ async fn main() -> Result<()> {
             let mut opts = cli.base_options(timeout, &args.query);
             opts.category = args.category;
             opts.engines = split_engines(args.engines.as_deref());
-            opts.max_results = args.max_results.clamp(1, cfg.max_results_limit());
+            warn_unknown_engines(&opts, args.category);
+            // `max(1)`: a zero operator limit must clamp, not panic in `clamp`
+            let limit = cfg.max_results_limit().max(1);
+            opts.max_results = args.max_results.clamp(1, limit);
             opts.safesearch = args.safesearch;
             opts.region = args.region.clone();
             opts.language = args.language.clone();
@@ -107,7 +114,7 @@ async fn main() -> Result<()> {
             let results = phrona::extract_many(
                 client.http(),
                 &args.urls,
-                args.max_chars,
+                args.max_chars.clamp(1, 100_000),
                 args.query.as_deref(),
             )
             .await;
@@ -144,9 +151,10 @@ async fn main() -> Result<()> {
         }
         Command::Ground(args) => {
             let mut opts = cli.base_options(timeout, &args.query);
-            opts.max_results = args.max_results.clamp(1, cfg.max_results_limit());
+            opts.max_results = args.max_results.clamp(1, cfg.max_results_limit().max(1));
             opts.engines = split_engines(args.engines.as_deref());
             opts.category = args.category;
+            warn_unknown_engines(&opts, args.category);
             opts.region = args.region.clone();
             opts.language = args.language.clone();
             opts.time_range = args.time_range;
@@ -299,7 +307,10 @@ async fn run_serve(args: &args::ServeArgs, cfg: &PhronaConfig) -> anyhow::Result
 async fn run_bootstrap(client: &phrona::SearchClient, args: &BootstrapArgs) -> anyhow::Result<()> {
     // cookies register on the shared EngineShared through interior
     // mutability, so `&SearchClient` suffices
-    let known: Vec<&str> = ["google", "annas_archive", "qwant"].to_vec();
+    let known: Vec<&str> = phrona::bootstrap::SEEDS
+        .iter()
+        .map(|(name, _, _)| *name)
+        .collect();
     let engines: Vec<String> = if args.engines.is_empty() {
         known.iter().map(|s| s.to_string()).collect()
     } else {
@@ -315,13 +326,20 @@ async fn run_bootstrap(client: &phrona::SearchClient, args: &BootstrapArgs) -> a
     };
     for engine in engines {
         print!("{engine}: ");
-        match tokio::task::spawn_blocking({
+        // no trailing newline yet: flush so the label shows before the
+        // (potentially minutes-long) harvest runs
+        {
+            use std::io::Write;
+            let _ = std::io::stdout().flush();
+        }
+        // bounded like the orchestrator's silent path: a stuck browser
+        // must fail loudly here instead of hanging the command forever
+        let harvest = tokio::task::spawn_blocking({
             let engine = engine.clone();
             move || phrona::bootstrap::harvest_blocking(&engine)
-        })
-        .await?
-        {
-            Ok(jar) => {
+        });
+        match tokio::time::timeout(phrona::bootstrap::HARVEST_TIMEOUT, harvest).await {
+            Ok(Ok(Ok(jar))) => {
                 println!(
                     "OK ({} cookies, {} bytes)",
                     jar.split("; ").count(),
@@ -330,7 +348,12 @@ async fn run_bootstrap(client: &phrona::SearchClient, args: &BootstrapArgs) -> a
                 client.register_bootstrap_cookie(&engine, jar.clone());
                 phrona::bootstrap::store_cached(&engine, &jar);
             }
-            Err(e) => println!("FAILED ({e})"),
+            Ok(Ok(Err(e))) => println!("FAILED ({e})"),
+            Ok(Err(_)) => println!("FAILED (harvest task panicked)"),
+            Err(_) => println!(
+                "FAILED (timed out after {}s)",
+                phrona::bootstrap::HARVEST_TIMEOUT.as_secs()
+            ),
         }
     }
     Ok(())
@@ -339,6 +362,17 @@ async fn run_bootstrap(client: &phrona::SearchClient, args: &BootstrapArgs) -> a
 fn split_engines(s: Option<&str>) -> Vec<String> {
     s.map(|s| s.split(',').map(|e| e.trim().to_string()).collect())
         .unwrap_or_default()
+}
+
+/// Warn about `--engines` names that match nothing in the category instead
+/// of silently running a subset (typos otherwise look like outages).
+fn warn_unknown_engines(opts: &phrona::SearchOptions, category: phrona::Category) {
+    for unknown in phrona::engine::unknown_engine_names(opts, category) {
+        eprintln!(
+            "warning: unknown engine '{unknown}' for category {}; see 'phrona engines'",
+            category.as_str()
+        );
+    }
 }
 
 fn split_sources(s: Option<&str>) -> anyhow::Result<Vec<SuggestSource>> {
@@ -377,38 +411,45 @@ async fn run_test(
         Some(c) => vec![c],
         None => phrona::Category::ALL.to_vec(),
     };
-    let mut reports = Vec::new();
-    let mut any_success = false;
-    for cat in cats {
+    // categories probe concurrently: sequential probing stacks 8
+    // per-category deadlines into a minute-plus run (`join_all` preserves
+    // input order, so the matrix stays stable)
+    let probes = cats.into_iter().map(|cat| {
         let mut opts = cli.base_options(timeout, &args.query);
         opts.category = cat;
         opts.max_results = args.max_results.clamp(1, 10);
         // availability probing must observe every engine, not stop at the
         // first ones that fill max_results
         opts.probe_all = true;
-        match client.search(opts).await {
-            Ok(resp) => {
-                any_success = true;
-                reports.push((cat, resp));
-            }
-            Err(e) => {
-                reports.push((
-                    cat,
-                    phrona::SearchResponse {
-                        query: args.query.clone(),
-                        category: cat,
-                        page: 1,
-                        total: 0,
-                        results: Vec::new(),
-                        suggestions: Vec::new(),
-                        answer: None,
-                        engines: Vec::new(),
-                        elapsed_ms: 0,
-                    },
-                ));
-                eprintln!("category {}: {e}", cat.as_str());
+        async move {
+            match client.search(opts).await {
+                Ok(resp) => (cat, resp, true),
+                Err(e) => {
+                    eprintln!("category {}: {e}", cat.as_str());
+                    (
+                        cat,
+                        phrona::SearchResponse {
+                            query: args.query.clone(),
+                            category: cat,
+                            page: 1,
+                            total: 0,
+                            results: Vec::new(),
+                            suggestions: Vec::new(),
+                            answer: None,
+                            engines: Vec::new(),
+                            elapsed_ms: 0,
+                        },
+                        false,
+                    )
+                }
             }
         }
+    });
+    let mut reports = Vec::new();
+    let mut any_success = false;
+    for (cat, resp, ok) in futures::future::join_all(probes).await {
+        any_success |= ok;
+        reports.push((cat, resp));
     }
     if cli.json {
         let out: Vec<_> = reports

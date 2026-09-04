@@ -33,14 +33,15 @@ static RUNTIME: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| {
 fn parse_profile(s: &str) -> PyResult<Profile> {
     Profile::from_name(s).ok_or_else(|| {
         PyValueError::new_err(format!(
-            "unknown profile '{s}', expected one of: chrome, chrome100, chrome120, chrome131, chrome140, chrome149, firefox, firefox139, firefox148, safari, edge, opera, opera131, okhttp, random"
+            "unknown profile '{s}', expected one of: {}",
+            Profile::ALL_NAMES.join(", ")
         ))
     })
 }
 
 fn parse_category(s: &str) -> PyResult<Category> {
     s.parse::<Category>().map_err(|_| {
-        PyValueError::new_err("category must be one of: web, images, news, videos, books")
+        PyValueError::new_err(format!("category must be one of: {}", Category::list_str()))
     })
 }
 
@@ -96,9 +97,12 @@ impl Client {
     #[new]
     #[pyo3(signature = (profile="chrome", timeout=15.0))]
     fn new(profile: &str, timeout: f64) -> PyResult<Self> {
+        // clamped: NaN/infinity from Python must not reach
+        // `Duration::from_secs_f64` (which panics on them)
+        let timeout = timeout.clamp(1.0, 3600.0);
         let client = SearchClient::with_options(
             parse_profile(profile)?,
-            Some(Duration::from_secs_f64(timeout.max(1.0))),
+            Some(Duration::from_secs_f64(timeout)),
             None,
             phrona_core::TargetPolicy::default(),
         )
@@ -207,6 +211,7 @@ impl Client {
         max_chars: usize,
         query: Option<&str>,
     ) -> PyResult<Py<PyAny>> {
+        let max_chars = max_chars.clamp(1, 100_000);
         let page = py
             .detach(|| {
                 RUNTIME
@@ -225,25 +230,27 @@ impl Client {
     /// List available engines per category.
     #[pyo3(signature = (category=None))]
     fn engines(&self, py: Python<'_>, category: Option<String>) -> PyResult<Py<PyAny>> {
-        let out = py.detach(|| {
-            RUNTIME.block_on(async {
-                let mut out = serde_json::Map::new();
-                let cats: Vec<Category> = match category {
-                    Some(c) => vec![parse_category(&c)?],
-                    None => Category::ALL.to_vec(),
-                };
-                for cat in cats {
-                    let names: Vec<String> = phrona_core::available_engines(cat)
-                        .iter()
-                        .map(|e| e.name.clone())
-                        .collect();
-                    out.insert(cat.as_str().to_string(), serde_json::json!(names));
-                }
-                Ok::<_, PyErr>(serde_json::Value::Object(out))
-            })
-        });
-        to_py(py, &out?)
+        let value = engines_value(category)?;
+        to_py(py, &value)
     }
+}
+
+/// Pure engine listing: needs no HTTP client (previously this built a
+/// whole connection pool just to read a static registry).
+fn engines_value(category: Option<String>) -> PyResult<serde_json::Value> {
+    let mut out = serde_json::Map::new();
+    let cats: Vec<Category> = match category {
+        Some(c) => vec![parse_category(&c)?],
+        None => Category::ALL.to_vec(),
+    };
+    for cat in cats {
+        let names: Vec<String> = phrona_core::available_engines(cat)
+            .iter()
+            .map(|e| e.name.clone())
+            .collect();
+        out.insert(cat.as_str().to_string(), serde_json::json!(names));
+    }
+    Ok(serde_json::Value::Object(out))
 }
 
 fn build_client(profile: &str, timeout: f64) -> PyResult<Client> {
@@ -311,11 +318,12 @@ fn extract(
     build_client("chrome", 15.0)?.extract(py, url, max_chars, query)
 }
 
-/// One-shot engines listing with a default client.
+/// One-shot engines listing (no client needed: pure registry read).
 #[pyfunction]
 #[pyo3(signature = (category=None))]
 fn engines(py: Python<'_>, category: Option<String>) -> PyResult<Py<PyAny>> {
-    build_client("chrome", 15.0)?.engines(py, category)
+    let value = engines_value(category)?;
+    to_py(py, &value)
 }
 
 #[pyfunction]

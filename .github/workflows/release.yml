@@ -52,7 +52,7 @@ jobs:
       - name: Build binaries
         env:
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
-        run: cargo build --release -p phrona-cli -p phrona-api -p phrona-mcp
+        run: cargo build --release --target ${{ matrix.target }} -p phrona-cli -p phrona-api -p phrona-mcp
 
       - name: Package (unix)
         if: matrix.asset == 'tar.gz'
@@ -60,7 +60,7 @@ jobs:
         run: |
           mkdir -p dist
           tar -czf "dist/phrona-${{ matrix.target }}.tar.gz" \
-            -C target/release phrona phrona-api phrona-mcp
+            -C target/${{ matrix.target }}/release phrona phrona-api phrona-mcp
           sha256sum "dist/phrona-${{ matrix.target }}.tar.gz" > "dist/phrona-${{ matrix.target }}.tar.gz.sha256"
 
       - name: Package (windows)
@@ -68,7 +68,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist
-          cd target/release
+          cd target/${{ matrix.target }}/release
           powershell Compress-Archive -Path phrona.exe,phrona-api.exe,phrona-mcp.exe \
             -DestinationPath "../../dist/phrona-${{ matrix.target }}.zip"
           cd ../..

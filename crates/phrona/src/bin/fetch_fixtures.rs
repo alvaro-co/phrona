@@ -54,7 +54,16 @@ async fn bytes_capture(resp: wreq::Response) -> Capture {
 }
 
 async fn get(client: &HttpClient, url: String) -> Capture {
-    bytes_capture(client.get(&url).await.expect("request")).await
+    match client.get(&url).await {
+        // a single failed fetch must not abort the whole capture run:
+        // record it as a failed capture and keep the existing fixture
+        Ok(resp) => bytes_capture(resp).await,
+        Err(_) => Capture {
+            body: String::new(),
+            status: 0,
+            content_type: String::new(),
+        },
+    }
 }
 
 /// POST to Startpage's SERP, solving an Anubis interstitial when one is
@@ -198,7 +207,17 @@ async fn run(client: &HttpClient, ctx: &EngineContext<'_>, query: &str) {
                     ("lang", "en"),
                 ],
             );
-            bytes_capture(client.get_with_headers(&url, &headers).await.unwrap()).await
+            bytes_capture(match client.get_with_headers(&url, &headers).await {
+                Ok(resp) => resp,
+                Err(_) => {
+                    return Capture {
+                        body: String::new(),
+                        status: 0,
+                        content_type: String::new(),
+                    };
+                }
+            })
+            .await
         }),
     ));
     jobs.push((
@@ -445,7 +464,17 @@ async fn run(client: &HttpClient, ctx: &EngineContext<'_>, query: &str) {
                     ("safe", "moderate"),
                 ],
             );
-            bytes_capture(fresh.get_with_headers(&url, &headers).await.unwrap()).await
+            bytes_capture(match fresh.get_with_headers(&url, &headers).await {
+                Ok(resp) => resp,
+                Err(_) => {
+                    return Capture {
+                        body: String::new(),
+                        status: 0,
+                        content_type: String::new(),
+                    };
+                }
+            })
+            .await
         }),
     ));
     jobs.push((
@@ -492,6 +521,53 @@ async fn run(client: &HttpClient, ctx: &EngineContext<'_>, query: &str) {
             parse::with_query(
                 "https://annas-archive.gd/search",
                 [("q", query), ("page", "1")],
+            ),
+        )),
+    ));
+    jobs.push((
+        "github_code.json",
+        Box::pin(get(
+            client,
+            parse::with_query(
+                "https://api.github.com/search/repositories",
+                [("q", query), ("per_page", "5"), ("page", "1")],
+            ),
+        )),
+    ));
+    jobs.push((
+        "arxiv_papers.xml",
+        Box::pin(get(
+            client,
+            parse::with_query(
+                "https://export.arxiv.org/api/query",
+                [
+                    ("search_query", format!("all:{query}")),
+                    ("start", "0".to_string()),
+                    ("max_results", "5".to_string()),
+                    ("sortBy", "relevance".to_string()),
+                    ("sortOrder", "descending".to_string()),
+                ],
+            ),
+        )),
+    ));
+    jobs.push((
+        "archive_org.json",
+        Box::pin(get(
+            client,
+            parse::with_query(
+                "https://archive.org/advancedsearch.php",
+                [
+                    ("q", query),
+                    ("fl[]", "identifier"),
+                    ("fl[]", "title"),
+                    ("fl[]", "description"),
+                    ("fl[]", "mediatype"),
+                    ("fl[]", "creator"),
+                    ("fl[]", "date"),
+                    ("rows", "5"),
+                    ("page", "1"),
+                    ("output", "json"),
+                ],
             ),
         )),
     ));
@@ -565,10 +641,10 @@ fn load_meta() -> serde_json::Map<String, serde_json::Value> {
 /// least one result from the captured body.
 fn fixture_parses(name: &str, body: &str) -> bool {
     use phrona::engines::{
-        annas_archive, bing, bing_images, bing_news, bing_videos, brave, brave_images, brave_news,
-        brave_videos, duckduckgo_images, duckduckgo_news, duckduckgo_videos, google, google_images,
-        marginalia, mojeek, mojeek_images, qwant, startpage, startpage_images, yahoo, yahoo_news,
-        yandex,
+        annas_archive, archive_org, arxiv, bing, bing_images, bing_news, bing_videos, brave,
+        brave_images, brave_news, brave_videos, duckduckgo_images, duckduckgo_news,
+        duckduckgo_videos, github, google, google_images, marginalia, mojeek, mojeek_images, qwant,
+        startpage, startpage_images, yahoo, yahoo_news, yandex,
     };
 
     let parsed_html: Option<Vec<RawResult>> = match name {
@@ -608,6 +684,11 @@ fn fixture_parses(name: &str, body: &str) -> bool {
         return !results.is_empty();
     }
 
+    // the one non-HTML, non-JSON fixture: validated by its own Atom parser
+    if name == "arxiv_papers.xml" {
+        return !arxiv::parse_arxiv(body, "arxiv").is_empty();
+    }
+
     let Ok(json) = serde_json::from_str::<serde_json::Value>(body) else {
         return false;
     };
@@ -616,27 +697,14 @@ fn fixture_parses(name: &str, body: &str) -> bool {
         "ddg_images.json" => !duckduckgo_images::parse_ddg_images(&json, "ddg_images").is_empty(),
         "ddg_news.json" => !duckduckgo_news::parse_ddg_news(&json, "ddg_news").is_empty(),
         "ddg_videos.json" => !duckduckgo_videos::parse_ddg_videos(&json, "ddg_videos").is_empty(),
-        "google_images.json" => {
-            !google_images::parse_google_images(body, "google_images").is_empty()
-        }
+        "github_code.json" => !github::parse_github(&json, "github").is_empty(),
+        "archive_org.json" => !archive_org::parse_archive_org(&json, "archive_org").is_empty(),
         "wikipedia_opensearch.json" => {
-            let titles = json
-                .get(1)
-                .and_then(|v| v.as_array())
-                .map(|a| a.len())
-                .unwrap_or(0);
-            let urls = json
-                .get(3)
-                .and_then(|v| v.as_array())
-                .map(|a| a.len())
-                .unwrap_or(0);
-            titles > 0 || urls > 0
+            phrona::engines::wikipedia::parse_opensearch(&json).is_some()
         }
-        "grokipedia.json" => json
-            .get("results")
-            .and_then(|r| r.as_array())
-            .map(|a| !a.is_empty())
-            .unwrap_or(false),
+        "grokipedia.json" => {
+            !phrona::engines::grokipedia::parse_grokipedia(&json, "grokipedia").is_empty()
+        }
         _ => false,
     }
 }

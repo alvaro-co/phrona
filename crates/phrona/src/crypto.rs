@@ -2,8 +2,6 @@
 //! proof-of-work solver in `engines/altcha`). Standard definitions;
 //! verified against RFC-distributed test vectors in the tests below.
 
-#![allow(missing_docs)] // internal primitives; module docs suffice
-
 use sha2::{Digest, Sha256};
 
 const BLOCK: usize = 64;
@@ -18,6 +16,7 @@ pub struct HmacSha256 {
 }
 
 impl HmacSha256 {
+    /// Key the MAC. Keys longer than the block size hash down first (RFC 2104).
     pub fn new(key: &[u8]) -> Self {
         let mut k = [0u8; BLOCK];
         if key.len() > BLOCK {
@@ -27,16 +26,24 @@ impl HmacSha256 {
         } else {
             k[..key.len()].copy_from_slice(key);
         }
+        // stack pads: no allocation on the hot solver path
+        let mut ipad = [0x36u8; BLOCK];
+        let mut opad = [0x5cu8; BLOCK];
+        for (i, b) in k.iter().enumerate() {
+            ipad[i] ^= b;
+            opad[i] ^= b;
+        }
         let mut inner_mid = Sha256::new();
-        inner_mid.update(k.iter().map(|b| b ^ 0x36).collect::<Vec<u8>>());
+        inner_mid.update(ipad);
         let mut outer_mid = Sha256::new();
-        outer_mid.update(k.iter().map(|b| b ^ 0x5c).collect::<Vec<u8>>());
+        outer_mid.update(opad);
         Self {
             inner_mid,
             outer_mid,
         }
     }
 
+    /// Finalize the MAC over `msg`.
     pub fn finish(&self, msg: &[u8]) -> [u8; 32] {
         let mut inner = self.inner_mid.clone();
         inner.update(msg);
@@ -47,6 +54,7 @@ impl HmacSha256 {
     }
 }
 
+/// One-shot HMAC-SHA-256.
 pub fn hmac_sha256(key: &[u8], msg: &[u8]) -> [u8; 32] {
     HmacSha256::new(key).finish(msg)
 }

@@ -11,9 +11,9 @@ use phrona::{Category, Profile, SearchOptions, TimeRange};
     name = "phrona",
     version,
     about = "Phrona command-line interface",
-    long_about = "Search 26 engines across 5 categories, get suggestions, extract pages, \
-                  produce AI-grounded answers, and probe engine availability. \
-                  All commands accept --json for machine-readable output."
+    long_about = "Search 29 engines across 8 categories, get suggestions, extract pages, \
+                   produce AI-grounded answers, and probe engine availability. \
+                   All commands accept --json for machine-readable output."
 )]
 pub struct Cli {
     /// Machine-readable JSON output
@@ -21,7 +21,7 @@ pub struct Cli {
     pub json: bool,
 
     /// Browser impersonation profile (default: engines.profile from
-    /// phonona.yaml / PHRONA_ENGINES_PROFILE, else chrome)
+    /// phrona.yaml / PHRONA_ENGINES_PROFILE, else chrome)
     #[arg(long, global = true, value_parser = profile_parser)]
     pub profile: Option<Profile>,
 
@@ -82,7 +82,7 @@ pub struct SearchArgs {
     /// Search query
     pub query: String,
 
-    /// Result category: web | images | news | videos | books
+    /// Result category: web | images | news | videos | books | code | papers | archives
     #[arg(long, value_parser = category_parser, default_value = "web")]
     pub category: Category,
 
@@ -165,7 +165,7 @@ pub struct GroundArgs {
     #[arg(long)]
     pub engines: Option<String>,
 
-    /// Result category: web | images | news | videos | books
+    /// Result category: web | images | news | videos | books | code | papers | archives
     #[arg(long, value_parser = category_parser, default_value = "web")]
     pub category: Category,
 
@@ -202,14 +202,14 @@ pub struct EnginesArgs {
     pub category: Option<Category>,
 }
 
-/// Arguments for `phrona test`: probe engine availability across
-/// Arguments for `phrona bootstrap`.
+/// Arguments for `phrona bootstrap`: refresh session cookies.
 #[derive(Args)]
 pub struct BootstrapArgs {
     /// Engines to refresh (default: all with bootstrap support)
     pub engines: Vec<String>,
 }
 
+/// Arguments for `phrona test`: probe engine availability across
 /// categories.
 #[derive(Args)]
 pub struct TestArgs {
@@ -262,7 +262,10 @@ pub struct CompletionsArgs {
 /// Parse a CLI category argument into a [`Category`], with a friendly error.
 pub fn category_parser(s: &str) -> Result<Category, String> {
     s.parse::<Category>().map_err(|_| {
-        "invalid category, expected one of: web, images, news, videos, books".to_string()
+        format!(
+            "invalid category, expected one of: {}",
+            Category::list_str()
+        )
     })
 }
 
@@ -279,7 +282,8 @@ fn time_range_parser(s: &str) -> Result<TimeRange, String> {
 fn profile_parser(s: &str) -> Result<Profile, String> {
     Profile::from_name(s).ok_or_else(|| {
         format!(
-            "unknown profile '{s}', expected chrome, firefox, safari, edge, opera, okhttp, random"
+            "unknown profile '{s}', expected one of: {}",
+            Profile::ALL_NAMES.join(", ")
         )
     })
 }

@@ -25,7 +25,7 @@ Profiles: `Chrome` (148), `Chrome100`, `Chrome120`, `Chrome131`, `Chrome140`,
 `Opera` (131), `OkHttp`, `Random` (random per request). `Random` is useful
 for bot-heavy sites but costs pool efficiency.
 
-`HttpClient` methods: `get`, `get_with_headers`, `post_form`, `post_form_with_headers`.
+`HttpClient` methods: `get`, `get_with_headers`, `get_no_redirect` (single hop, for SSRF-guarded flows), `post_form`, `post_form_with_headers`.
 
 ## Options
 
@@ -34,15 +34,17 @@ for bot-heavy sites but costs pool efficiency.
 ```rust
 pub struct SearchOptions {
     pub query: String,
-    pub category: Category,          // Web | Images | News | Videos | Books
+    pub category: Category,          // Web | Images | News | Videos | Books | Code | Papers | Archives
     pub engines: Vec<String>,        // empty = all engines for the category
-    pub page: u32,
+    pub page: u32,                   // 1-based, normalized to >= 1
     pub max_results: usize,
     pub safesearch: SafeSearch,      // Off | Moderate | Strict
     pub region: Option<String>,      // e.g. "us-en", "de-de"
     pub language: Option<String>,    // e.g. "en"
     pub time_range: Option<TimeRange>, // Day | Week | Month | Year
     pub filters: Option<String>,     // engine-specific filter string
+    pub probe_all: bool,             // run every engine to completion (probing)
+    pub timeout: Duration,           // overall search deadline
 }
 ```
 
@@ -55,8 +57,13 @@ pub struct SearchOptions {
 use phrona::{SearchClient, SearchOptions, ResultItem};
 
 let client = SearchClient::new()?;                  // Chrome profile, 10s timeout
-// or with an explicit profile, timeout and optional proxy:
-let client = SearchClient::with_options(Profile::Firefox, Some(Duration::from_secs(20)), None)?;
+// or with an explicit profile, timeout, optional proxies and SSRF policy:
+let client = SearchClient::with_options(
+    Profile::Firefox,
+    Some(Duration::from_secs(20)),
+    None,
+    TargetPolicy::default(),
+)?;
 let opts = SearchOptions {
     max_results: 30,
     engines: vec!["bing".into(), "brave".into(), "startpage".into()],
@@ -150,7 +157,7 @@ failed; otherwise results (possibly empty) are returned honestly.
   params: utm_*, fbclid, gclid, ref, source, si, spm, s, ...).
 - `dedup::group(raw)` - groups results; empty-URL items become answer markers.
 - `rank::rank(groups, query)` - scores by cross-engine agreement (+1.5 per
-  extra engine), position (10/pos, capped), Wikipedia/Grokipedia bonus, and
+  agreeing engine), position (10/pos, capped), Wikipedia/Grokipedia bonus, and
   query-term text match on title/description. Returns `(raw_score, group)`
   pairs sorted best-first.
 - `rank::normalize_score(raw)` - derives the display score (0.001..0.999,
@@ -165,9 +172,9 @@ failed; otherwise results (possibly empty) are returned honestly.
 
 ## Sync vs async
 
-Both APIs exist everywhere. `search_sync` runs the ambient tokio runtime when
-present, otherwise a shared internal runtime, so it is safe to call from
-plain threads and from within async contexts.
+Both APIs exist everywhere. `search_sync` blocks on a shared internal
+runtime and refuses (with an error, never a deadlock) when called from
+inside an active Tokio runtime - use the async `search().await` there.
 
 ## Feature flags
 

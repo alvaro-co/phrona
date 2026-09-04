@@ -102,14 +102,21 @@ impl Engine for AnnasArchive {
             // Some upstreams treat client TLS stacks differently, so a
             // second stack often succeeds where the first is throttled.
             // Reaching this point means the primary produced nothing.
-            // Cap at two curl attempts across all mirrors.
+            // Cap at two curl attempts across all mirrors. Runs on a
+            // blocking thread: `curl_get` waits on a child process.
             if fallbacks < 2 {
                 fallbacks += 1;
                 if dbg {
                     eprintln!("[dbg] {domain} curl fallback");
                 }
-                match util::curl_get(&url, bootstrap.as_deref(), 20) {
-                    Ok((_, body)) => {
+                let curl_url = url.clone();
+                let curl_cookie = bootstrap.clone();
+                let curl_out = tokio::task::spawn_blocking(move || {
+                    util::curl_get(&curl_url, curl_cookie.as_deref(), 20)
+                })
+                .await;
+                match curl_out {
+                    Ok(Ok((status, body))) if (200..300).contains(&status) => {
                         let text = String::from_utf8_lossy(&body);
                         if dbg {
                             eprintln!("[dbg] {domain} curl len={}", text.len());
@@ -119,15 +126,26 @@ impl Engine for AnnasArchive {
                             return Ok(results);
                         }
                     }
-                    Err(e) => {
+                    Ok(Ok((status, _))) => {
+                        if dbg {
+                            eprintln!("[dbg] {domain} curl status={status}");
+                        }
+                    }
+                    Ok(Err(e)) => {
                         if dbg {
                             eprintln!("[dbg] {domain} curl err: {e}");
                         }
                     }
+                    Err(_) => {}
                 }
             }
         }
-        Err(last_err.unwrap_or_else(|| Error::unavailable(self.name(), 503)))
+        Err(last_err.unwrap_or_else(|| {
+            // every mirror answered but nothing parsed: the pages were
+            // reachable yet carried no results (block pages or schema
+            // drift) - a structural failure, not a phantom 503
+            Error::schema(self.name(), "no parseable results on any mirror")
+        }))
     }
 }
 

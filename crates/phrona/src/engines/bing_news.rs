@@ -50,6 +50,9 @@ pub fn parse_bing_news(html: &str, engine: &str) -> Vec<RawResult> {
     let doc = parse::parse_html(html);
     let mut out = Vec::new();
     let sel = scraper::Selector::parse("div.newsitem").unwrap();
+    // parsed once per page, not once per result
+    let age_sel = scraper::Selector::parse("span[aria-label]").unwrap();
+    let img_sel = scraper::Selector::parse("a.image img[src]").unwrap();
     let mut pos = 0u32;
     for node in doc.select(&sel) {
         let title = node.value().attr("data-title").unwrap_or("");
@@ -58,18 +61,12 @@ pub fn parse_bing_news(html: &str, engine: &str) -> Vec<RawResult> {
             continue;
         }
         let published = node
-            .select(&scraper::Selector::parse("span[aria-label]").unwrap())
+            .select(&age_sel)
             .next()
             .and_then(|s| s.value().attr("aria-label"))
-            .and_then(normalize_date)
-            .or_else(|| {
-                node.select(&scraper::Selector::parse("span[aria-label]").unwrap())
-                    .next()
-                    .and_then(|s| s.value().attr("aria-label"))
-                    .map(|d| d.to_string())
-            });
+            .map(|d| normalize_date(d).unwrap_or_else(|| d.to_string()));
         let image = node
-            .select(&scraper::Selector::parse("a.image img[src]").unwrap())
+            .select(&img_sel)
             .next()
             .map(|i| i.value().attr("src").unwrap_or("").to_string())
             .filter(|s| !s.is_empty());
@@ -119,5 +116,8 @@ mod tests {
         assert!(normalize_date("3 days ago").is_some());
         assert!(normalize_date("2 Stunden").is_some());
         assert!(normalize_date("5 dias").is_some());
+        assert!(normalize_date("a day ago").is_some());
+        assert!(normalize_date("an hour ago").is_some());
+        assert!(normalize_date("yesterday").is_none());
     }
 }

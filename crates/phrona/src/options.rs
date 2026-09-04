@@ -113,6 +113,9 @@ mod tests {
             ("news", Category::News),
             ("videos", Category::Videos),
             ("books", Category::Books),
+            ("code", Category::Code),
+            ("papers", Category::Papers),
+            ("archives", Category::Archives),
         ] {
             assert_eq!(s.parse::<Category>().unwrap(), expect);
         }

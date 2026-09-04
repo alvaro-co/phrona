@@ -16,7 +16,7 @@ cargo install phrona-cli
 ```bash
 phrona search "rust programming" --max-results 10
 phrona suggest rus
-phrona extract "https://example.com" --ground
+phrona extract "https://example.com" --max-chars 4000 --query "rust"
 phrona engines
 phrona test                 # availability probe
 phrona serve                # REST 8080 + MCP-over-TCP 8081

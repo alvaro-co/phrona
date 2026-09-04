@@ -140,23 +140,19 @@ pub fn parse_google(html: &str, engine: &str) -> Vec<RawResult> {
     }
 
     let mut seen = std::collections::HashSet::new();
+    // parsed once per page, not once per container node
+    let h3 = scraper::Selector::parse("h3").unwrap();
+    let anchor_sel = scraper::Selector::parse("a[href]:has(h3)").unwrap();
     for container in ["[jscontroller=SC7lYd]", "div[data-hveid]"] {
         let start = pos;
         let Ok(sel) = scraper::Selector::parse(container) else {
             continue;
         };
         for node in doc.select(&sel) {
-            if node
-                .select(&scraper::Selector::parse("h3").unwrap())
-                .next()
-                .is_none()
-            {
+            if node.select(&h3).next().is_none() {
                 continue;
             }
-            let Some(anchor) = node
-                .select(&scraper::Selector::parse("a[href]:has(h3)").unwrap())
-                .next()
-            else {
+            let Some(anchor) = node.select(&anchor_sel).next() else {
                 continue;
             };
             let title = parse::text_of(&anchor);
