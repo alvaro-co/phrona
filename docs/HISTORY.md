@@ -48,6 +48,10 @@
   `archive_org`/`archives` are new); 199 offline tests green, zero
   clippy warnings; binaries + Python wheels publish from the `v0.3.0`
   tag via the release workflow.
+- `quick-xml` 0.38.4 -> 0.41.0 (two HIGH advisories in the old
+  version: quadratic attribute scan, unbounded `NsReader` allocation;
+  the arXiv parser adapts to the new `BytesText` API and now decodes
+  XML entities for display).
 - The three sections below detail the release: new engines, the audit
   pass, and the perfection pass.
 

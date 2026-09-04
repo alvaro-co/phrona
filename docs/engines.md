@@ -60,7 +60,8 @@ exit.
 - **github** - public repository search only (code search needs
   authentication and is out of scope); the 10 req/min shared quota is
   reported as rate-limited, never as a block.
-- **arxiv** - Atom feed parsed with `quick-xml`; a process-wide 3s gap
+- **arxiv** - Atom feed parsed with `quick-xml` (>= 0.41, see
+  RUSTSEC-2026-0194); a process-wide 3s gap
   between requests honors the upstream politeness rule.
 - **archive_org** - `advancedsearch.php` JSON; metadata fields
   (identifier/title/description/mediatype/creator/date) arrive as strings

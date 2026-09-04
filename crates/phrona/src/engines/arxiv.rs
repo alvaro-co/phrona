@@ -90,6 +90,16 @@ fn clean(s: &str) -> String {
     s.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
+/// Decode a text event to display text: bytes to string, then XML
+/// entities (`&lt;`, `&amp;`, ...) to their characters. Either step
+/// falls back to the raw text rather than dropping the result.
+fn text_of(event: quick_xml::events::BytesText<'_>) -> String {
+    let decoded = event.decode().map(|c| c.into_owned()).unwrap_or_default();
+    quick_xml::escape::unescape(&decoded)
+        .map(|c| c.into_owned())
+        .unwrap_or(decoded)
+}
+
 /// Parse an arXiv Atom feed into [`RawResult`] items (book-shaped: authors
 /// in `author`, `"arXiv"` as publisher, the abstract as `info`).
 pub fn parse_arxiv(xml: &str, engine: &str) -> Vec<RawResult> {
@@ -115,7 +125,7 @@ pub fn parse_arxiv(xml: &str, engine: &str) -> Vec<RawResult> {
                 b"title" | b"id" | b"published" | b"summary" if entry.is_some() => {
                     let tag = e.local_name().as_ref().to_vec();
                     if let Ok(text) = reader.read_text(e.name()) {
-                        let text = clean(&text);
+                        let text = clean(&text_of(text));
                         if let Some(en) = entry.as_mut() {
                             match tag.as_slice() {
                                 b"title" => en.title = text,
@@ -174,7 +184,8 @@ fn read_author(reader: &mut Reader<&[u8]>) -> Option<String> {
     loop {
         match reader.read_event_into(&mut buf) {
             Ok(Event::Start(e)) if e.local_name().as_ref() == b"name" => {
-                let text = reader.read_text(e.name()).ok()?.trim().to_string();
+                let raw = reader.read_text(e.name()).ok()?;
+                let text = text_of(raw).trim().to_string();
                 // drain to </author>
                 loop {
                     buf.clear();
@@ -222,5 +233,25 @@ mod tests {
         let xml = r#"<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom"></feed>"#;
         assert!(parse_arxiv(xml, "arxiv").is_empty());
         assert!(parse_arxiv("not xml at all <<<", "arxiv").is_empty());
+    }
+
+    #[test]
+    fn parse_decodes_xml_entities() {
+        let xml = r#"<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom">
+<entry><title>Fish &amp; Chips</title>
+<id>http://arxiv.org/abs/1234.5678v1</id>
+<published>2026-01-01T00:00:00Z</published>
+<summary>1 &lt; 2 &amp;&amp; 3 &gt; 2</summary>
+<author><name>A &amp; B</name></author>
+</entry></feed>"#;
+        let results = parse_arxiv(xml, "arxiv");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].title, "Fish & Chips");
+        assert_eq!(results[0].author, "A & B");
+        assert!(
+            results[0].description.contains("1 < 2"),
+            "{:?}",
+            results[0].description
+        );
     }
 }
