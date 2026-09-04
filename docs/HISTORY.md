@@ -42,6 +42,15 @@
   API field lists corrected (`info`, `source`, `image_url`),
   web console lists all categories, `search_sync` semantics fixed.
 
+## (2026-09-04) v0.3.1
+
+- Republish of v0.3.0 with no code changes. The first release run
+  uploaded the PyPI wheels from the pre-fix tree (quick-xml 0.38.4,
+  yanked chacha20) before the tag was moved to the fixed tree; PyPI
+  filenames are immutable, so the fixed tree ships as v0.3.1 and PyPI
+  serves it fresh. GitHub and crates.io already carried the fixed
+  tree under v0.3.0.
+
 ## (2026-09-04) v0.3.0
 
 - 29 engines across 8 categories (`github`/`code`, `arxiv`/`papers`,

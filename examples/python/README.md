@@ -9,7 +9,7 @@ The bindings require CPython 3.9-3.14.
 ```bash
 uv build                              # from the repo root
 uv venv --python 3.12 /tmp/msenv
-uv pip install --python /tmp/msenv/bin/python dist/phrona-0.3.0-*.whl
+uv pip install --python /tmp/msenv/bin/python dist/phrona-0.3.1-*.whl
 ```
 
 ## Run

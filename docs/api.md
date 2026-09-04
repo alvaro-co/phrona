@@ -32,7 +32,7 @@ The web frontend (single page: Search + Tools tabs). See
 ## GET /health
 
 ```json
-{"status":"ok","version":"0.3.0","engines":{"web":12,"images":6,"news":4,"videos":3,"books":1,"code":1,"papers":1,"archives":1},"uptime_s":42,"auth":false}
+{"status":"ok","version":"0.3.1","engines":{"web":12,"images":6,"news":4,"videos":3,"books":1,"code":1,"papers":1,"archives":1},"uptime_s":42,"auth":false}
 ```
 
 No auth required.

@@ -1,6 +1,6 @@
 [project]
 name = "phrona"
-version = "0.3.0"
+version = "0.3.1"
 description = "High-performance metasearch engine library - Rust core with Python bindings"
 readme = "crates/phrona-python/README.md"
 requires-python = ">=3.9"

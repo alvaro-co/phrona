@@ -11,14 +11,14 @@ members = [
 default-members = ["crates/*"]
 
 [workspace.package]
-version = "0.3.0"
+version = "0.3.1"
 edition = "2024"
 license = "AGPL-3.0-only"
 repository = "https://github.com/alvaro-co/phrona"
 rust-version = "1.85"
 
 [workspace.dependencies]
-phrona = { path = "crates/phrona", version = "0.3.0" }
+phrona = { path = "crates/phrona", version = "0.3.1" }
 wreq = { version = "6.0.0-rc.31", features = ["cookies", "gzip", "brotli", "zstd", "deflate", "charset", "stream"] }
 wreq-util = { version = "3.0.0-rc.14", features = ["emulation"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync", "net", "signal"] }
